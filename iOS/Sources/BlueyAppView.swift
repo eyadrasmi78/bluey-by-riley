@@ -190,7 +190,7 @@ private struct SessionRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(session.started.formatted(date: .abbreviated, time: .shortened))
+                    Text(session.name ?? session.started.formatted(date: .abbreviated, time: .shortened))
                         .font(.plexSans(15).weight(.semibold))
                         .foregroundStyle(.white)
                     if live {
@@ -232,6 +232,8 @@ struct SessionDetailView: View {
     let id: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    @State private var renaming = false
+    @State private var nameInput = ""
 
     /// A prompt for an agent (like Claude Code on the Mac) that points it at this session's notes files.
     private func copyPrompt(_ session: BlueySession) {
@@ -274,9 +276,20 @@ struct SessionDetailView: View {
                 }
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session?.started.formatted(date: .abbreviated, time: .shortened) ?? "Session")
-                        .font(.fredoka(20))
-                        .foregroundStyle(.white)
+                    HStack(spacing: 8) {
+                        Text(session?.name ?? session?.started.formatted(date: .abbreviated, time: .shortened) ?? "Session")
+                            .font(.fredoka(20))
+                            .foregroundStyle(.white)
+                        Button {
+                            nameInput = session?.name ?? ""
+                            renaming = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
                     if let session {
                         Text("\(SessionRow.duration(session.duration)) · \(session.questionCount) asked"
                              + (session.transcribing > 0 ? " · transcribing \(session.transcribing) chunk\(session.transcribing == 1 ? "" : "s")…" : ""))
@@ -327,6 +340,13 @@ struct SessionDetailView: View {
         }
         .background(Color.black)
         .toolbar(.hidden, for: .navigationBar)
+        .alert("Name this session", isPresented: $renaming) {
+            TextField("Design review", text: $nameInput)
+            Button("Save") { store.rename(id, to: nameInput) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Shows here and becomes the title of the Mac's notes file.")
+        }
     }
 }
 

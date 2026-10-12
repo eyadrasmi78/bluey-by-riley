@@ -5,6 +5,8 @@ import Foundation
 enum Keychain {
     enum Key: String {
         case anthropic, elevenlabs, openai
+        /// Base64 of the long-term TLS link key phones use to prove themselves (see GooglySecurity).
+        case linkKey
     }
 
     private static var cache: [String: String]?

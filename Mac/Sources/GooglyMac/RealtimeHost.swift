@@ -137,7 +137,7 @@ final class RealtimeHost {
             queue = []
             stopChoreography()
             overlay.goHome()
-            overlay.view.speechTarget = nil
+            overlay.speechTargetGlobal = nil
             showCaption(nil, for: 0)
         }
         onChange?()
@@ -226,8 +226,14 @@ final class RealtimeHost {
     private func runTool(_ name: String, arguments: String) async -> (text: String, image: String?) {
         let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any]) ?? [:]
         if Self.actionNames.contains(name) {
-            if let refusal = actionRefusal() { return (refusal, nil) }
-            return await runAction(name, args)
+            let detail = actionDetail(name, args)
+            if let refusal = actionRefusal() {
+                ActionLog.record(name, detail, outcome: "refused: \(refusal)")
+                return (refusal, nil)
+            }
+            let result = await runAction(name, args)
+            ActionLog.record(name, detail, outcome: result.text)
+            return result
         }
         switch name {
         case "look_at_screen":
@@ -236,7 +242,10 @@ final class RealtimeHost {
             let id = (args["target_id"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             guard let snapshot else { return ("Call look_at_screen first.", nil) }
             guard let target = snapshot.target(id) else { return ("No target \(id). Use an id from the last look_at_screen.", nil) }
-            point(to: CGPoint(x: target.rect.midX, y: target.rect.maxY + 3), showing: target.rect)
+            let origin = snapshot.origin
+            point(to: CGPoint(x: origin.x + target.rect.midX, y: origin.y + target.rect.maxY + 3),
+                  showing: CGRect(x: origin.x + target.rect.minX, y: origin.y + target.rect.minY,
+                                  width: target.rect.width, height: target.rect.height))
             return (queue.count > 1 ? "Queued: your cursor will point at \"\(target.text)\" after the earlier spots." : "Pointing at \"\(target.text)\".", nil)
         case "point_at_spot":
             guard let x = number(args["x"]), let y = number(args["y"]) else { return ("Give x and y.", nil) }
@@ -272,9 +281,11 @@ final class RealtimeHost {
             let shot = try await ScreenReader.snapshot()
             snapshot = shot
             var text = shot.targetList
-            let mouse = ComputerControl.mouseLocation
+            let global = ComputerControl.mouseLocation
+            let mouse = CGPoint(x: global.x - shot.origin.x, y: global.y - shot.origin.y)  // into captured-display space
             let mx = Int(min(max(mouse.x / shot.size.width, 0), 1) * 1000), my = Int(min(max(mouse.y / shot.size.height, 0), 1) * 1000)
             text += "\nThe user's mouse pointer is at @\(mx),\(my)"
+            if shot.origin != .zero { text += " (on a secondary display; the image is that display)" }
             if let under = shot.target(near: mouse) { text += ", on \(under.id) \"\(under.text)\"" }
             text += ". When they say \"this\", \"that\" or \"here\", they mean what's at their mouse pointer."
             if let prefix { text = prefix + "\nHere's the screen now (ids have changed):\n" + text }
@@ -285,6 +296,25 @@ final class RealtimeHost {
         } catch {
             let problem = "I can't see the screen. Screen Recording permission is off for Bluey on the Mac."
             return (prefix.map { $0 + " " + problem } ?? problem, nil)
+        }
+    }
+
+    /// A short description of an action for the log: what was clicked, typed at, opened.
+    private func actionDetail(_ name: String, _ args: [String: Any]) -> String {
+        switch name {
+        case "click":
+            let id = (args["target_id"] as? String).map { snapshot?.target($0)?.text ?? $0 }
+            let point = number(args["x"]).flatMap { x in number(args["y"]).map { y in "@\(Int(x)),\(Int(y))" } }
+            return id ?? point ?? "?"
+        case "type_text":
+            let text = args["text"] as? String ?? ""
+            return "\"\(text.prefix(60))\(text.count > 60 ? "…" : "")\""
+        case "press_keys": return args["keys"] as? String ?? "?"
+        case "scroll": return "\(args["direction"] as? String ?? "down")"
+        case "drag": return "drag"
+        case "open_app": return args["name"] as? String ?? "?"
+        case "open_url": return args["url"] as? String ?? "?"
+        default: return ""
         }
     }
 
@@ -300,13 +330,16 @@ final class RealtimeHost {
     }
 
     private func gridPoint(_ x: Double, _ y: Double) -> CGPoint {
-        CGPoint(x: min(max(x, 0), 1000) / 1000 * screenSize.width, y: min(max(y, 0), 1000) / 1000 * screenSize.height)
+        let origin = snapshot?.origin ?? .zero
+        return CGPoint(x: origin.x + min(max(x, 0), 1000) / 1000 * screenSize.width,
+                       y: origin.y + min(max(y, 0), 1000) / 1000 * screenSize.height)
     }
 
     /// Finds the spot an action refers to: a target id (its center) or a grid position.
+    /// Targets are captured-display-local; clicks work in Quartz-global space.
     private func spot(_ args: [String: Any], id idKey: String, x xKey: String, y yKey: String) -> (point: CGPoint, name: String)? {
-        if let id = args[idKey] as? String, !id.isEmpty, let target = snapshot?.target(id) {
-            return (CGPoint(x: target.rect.midX, y: target.rect.midY), target.text)
+        if let id = args[idKey] as? String, !id.isEmpty, let snapshot, let target = snapshot.target(id) {
+            return (CGPoint(x: snapshot.origin.x + target.rect.midX, y: snapshot.origin.y + target.rect.midY), target.text)
         }
         if let x = number(args[xKey]), let y = number(args[yKey]) {
             return (gridPoint(x, y), "that spot")
@@ -346,7 +379,7 @@ final class RealtimeHost {
             let count = (args["double"] as? Bool ?? false) ? 2 : 1
             let saved = ComputerControl.mouseLocation
             await fly(to: target.point)
-            view.clickEffect(at: target.point, right: right)
+            overlay.clickEffect(at: target.point, right: right)
             try? await Task.sleep(for: .milliseconds(90))  // the click lands at the bottom of the squish
             await ComputerControl.click(at: target.point, right: right, count: count)
             try? await Task.sleep(for: .milliseconds(60))
@@ -362,7 +395,9 @@ final class RealtimeHost {
             if field.secure {
                 return ("That's a password field. Ask the user to type it themselves.", nil)
             }
-            if let frame = field.frame, CGRect(origin: .zero, size: screenSize).intersects(frame), frame.height < screenSize.height * 0.6 {
+            // Field frames come back Quartz-global; the captured display's global rect is (origin, size).
+            let captured = CGRect(origin: snapshot?.origin ?? .zero, size: screenSize)
+            if let frame = field.frame, captured.intersects(frame), frame.height < screenSize.height * 0.6 {
                 await fly(to: CGPoint(x: frame.minX + min(28, frame.width * 0.2), y: frame.maxY + 2))
             } else if engine.isHome {
                 overlay.mode = .docked
@@ -471,7 +506,7 @@ final class RealtimeHost {
         holdUntil = 0
         homeRequested = false
         engine.gazeOverride = nil
-        overlay.view.speechTarget = nil
+        overlay.speechTargetGlobal = nil
     }
 
     private func afterAction() {
@@ -530,7 +565,7 @@ final class RealtimeHost {
         let now = CACurrentMediaTime()
         if now >= holdUntil, !queue.isEmpty {
             let (spot, thing) = queue.removeFirst()
-            overlay.view.speechTarget = thing
+            overlay.speechTargetGlobal = thing
             if !speaking { quietSince = now }  // give him time to start talking about it
             engine.gazeOverride = nil  // his eyes follow the cursor while pointing
             overlay.mode = .pinned(spot)
@@ -550,7 +585,7 @@ final class RealtimeHost {
     private func goHome() {
         overlay.goHome()
         engine.gazeOverride = nil
-        overlay.view.speechTarget = nil
+        overlay.speechTargetGlobal = nil
         homeRequested = false
         stopChoreography()
     }

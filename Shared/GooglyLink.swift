@@ -1,10 +1,72 @@
+import CryptoKit
 import Foundation
 import Network
+import Security
 
 /// Everything the Mac and the iPhone agree on: the Bonjour service name,
 /// what a "face update" looks like, and how lines of JSON travel over TCP.
 public enum GooglyService {
     public static let type = "_googly._tcp"
+    /// Advertised by the Mac only while its pairing window is open; hands over the link key.
+    public static let pairType = "_googlypair._tcp"
+}
+
+/// TLS 1.2 PSK cipher suite Apple's TLS stack negotiates between Apple devices
+/// (its PSK-only cipher set doesn't negotiate without one pinned).
+private let pskSuite = SSLCipherSuite(TLS_PSK_WITH_AES_128_GCM_SHA256)
+
+/// Encryption and pairing for the phone↔Mac link.
+///
+/// The link is TLS with a pre-shared key on top of the plain TCP settings below: a phone that
+/// doesn't hold the Mac's key can't even handshake. Pairing once types the 6-digit code the Mac's
+/// menu bar shows; that brief TLS-PSK channel (key stretched from the code) delivers the Mac's
+/// long-term link key, which the phone stores and offers from then on. Short codes are brute-
+/// forceable from a sniffed pairing handshake, which is exactly why daily traffic never uses
+/// the code-derived key again.
+public enum GooglySecurity {
+    /// Identity tag a paired phone offers.
+    public static let linkIdentity = "bluey-link"
+    /// Identity tag a phone pairing with the menu code offers.
+    public static let pairIdentity = "bluey-pair"
+
+    public static func newLinkKey() -> Data {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+
+    public static func newPairingCode() -> String {
+        String(format: "%06d", Int.random(in: 0..<1_000_000))
+    }
+
+    /// Stretches the 6-digit pairing code into the PSK used only during pairing.
+    public static func key(fromPairingCode code: String) -> Data {
+        let normalized = code.filter(\.isNumber)
+        let derived = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: Data(normalized.utf8)),
+            salt: Data("bluey-pair".utf8), info: Data(), outputByteCount: 32)
+        return derived.withUnsafeBytes { Data($0) }
+    }
+
+    /// Both sides (Apple's TLS needs a PSK cipher suite pinned and TLS clamped to 1.2 for
+    /// PSK-only handshakes). Pairing uses a separate short-lived listener; see PhoneServer.
+    public static func parameters(key: Data, identity: String) -> NWParameters {
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_add_pre_shared_key(tls.securityProtocolOptions, dispatch(key),
+                                                dispatch(Data(identity.utf8)))
+        sec_protocol_options_add_tls_ciphersuite(tls.securityProtocolOptions, pskSuite)
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 2
+        let params = NWParameters(tls: tls, tcp: tcp)
+        params.includePeerToPeer = true
+        return params
+    }
+
+    private static func dispatch(_ data: Data) -> dispatch_data_t {
+        data.withUnsafeBytes { DispatchData(bytes: $0) as dispatch_data_t }
+    }
 }
 
 public enum Mood: String, Codable, CaseIterable, Sendable {

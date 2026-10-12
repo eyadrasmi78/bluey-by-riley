@@ -173,6 +173,7 @@ enum NotesSync {
             var json: [String: Any] = ["id": session.id.uuidString, "started": session.started.timeIntervalSince1970,
                                        "transcribing": session.transcribing, "entries": entries]
             if let ended = session.ended { json["ended"] = ended.timeIntervalSince1970 }
+            if let name = session.name { json["name"] = name }
             guard let data = try? JSONSerialization.data(withJSONObject: json), let text = String(data: data, encoding: .utf8) else { continue }
             link.request(Packet(command: "notes", text: text)) { reply in
                 if let path = reply?.text { store.setNotesPath(session.id, path) }

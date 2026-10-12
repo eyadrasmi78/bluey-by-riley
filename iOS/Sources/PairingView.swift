@@ -1,8 +1,12 @@
 import SwiftUI
 
 /// Shown until the phone finds the Mac: a sleepy blob and how to wake him up.
+/// Once the link is encrypted, a found-but-unpaired Mac asks for the code from its menu bar instead.
 struct PairingView: View {
+    @ObservedObject var link: MacLink
     var onPlay: () -> Void
+    @State private var code = ""
+    @FocusState private var typing: Bool
 
     var body: some View {
         HStack(spacing: 56) {
@@ -10,34 +14,84 @@ struct PairingView: View {
                 .frame(width: 220, height: 190)
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("Wake me up from your Mac")
-                    .font(.fredoka(32))
-                    .foregroundStyle(Color(hex: 0xF4F1FA))
-                Text("Open Bluey in your Mac's menu bar. Keep both on the same Wi-Fi and I'll find it.")
-                    .font(.plexSans(16))
-                    .foregroundStyle(Color(hex: Palette.inkSoft))
-                    .frame(maxWidth: 380, alignment: .leading)
-                HStack(spacing: 10) {
-                    ProgressView().tint(Color(hex: Palette.berry1))
-                    Text("Looking for your Mac")
-                        .font(.plexMono(13))
-                        .foregroundStyle(Color(hex: Palette.inkSoft))
-                }
-                .padding(.top, 4)
-                Button(action: onPlay) {
-                    Text("Play without the Mac")
-                        .font(.plexSans(15).weight(.semibold))
+                if let mac = link.needsPairingFor {
+                    // Found the Mac, but we have no key for it: the six-digit menu code opens the door.
+                    Text("Pair with \(mac)")
+                        .font(.fredoka(32))
                         .foregroundStyle(Color(hex: 0xF4F1FA))
-                        .padding(.horizontal, 18)
-                        .frame(minHeight: 44)
-                        .background(Color(hex: Palette.panel), in: RoundedRectangle(cornerRadius: 14))
+                    Text("On the Mac, open Bluey in the menu bar and choose “Pair a Phone…”. "
+                         + "It shows a six-digit code. This keeps everything between the devices encrypted.")
+                        .font(.plexSans(16))
+                        .foregroundStyle(Color(hex: Palette.inkSoft))
+                        .frame(maxWidth: 400, alignment: .leading)
+                    HStack(spacing: 12) {
+                        TextField("123456", text: $code)
+                            .keyboardType(.numberPad)
+                            .font(.plexMono(24))
+                            .multilineTextAlignment(.center)
+                            .focused($typing)
+                            .foregroundStyle(Color(hex: 0xF4F1FA))
+                            .frame(width: 170, height: 52)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                            .onChange(of: code) { _, new in
+                                code = String(new.filter(\.isNumber).prefix(6))
+                                if code.count == 6 { pair() }
+                            }
+                        Button { pair() } label: {
+                            Text("Pair")
+                                .font(.plexSans(16).weight(.semibold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 24)
+                                .frame(minHeight: 52)
+                                .background(Color(hex: Palette.berry1), in: RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(code.count != 6)
+                    }
+                    if link.pairingFailed {
+                        Text("That code didn't work — the window may have closed. Check the Mac's menu for a fresh one.")
+                            .font(.plexSans(14))
+                            .foregroundStyle(Color(hex: 0xFF9AD0))
+                    }
+                } else {
+                    Text("Wake me up from your Mac")
+                        .font(.fredoka(32))
+                        .foregroundStyle(Color(hex: 0xF4F1FA))
+                    Text("Open Bluey in your Mac's menu bar. Keep both on the same Wi-Fi and I'll find it.")
+                        .font(.plexSans(16))
+                        .foregroundStyle(Color(hex: Palette.inkSoft))
+                        .frame(maxWidth: 380, alignment: .leading)
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Color(hex: Palette.berry1))
+                        Text("Looking for your Mac")
+                            .font(.plexMono(13))
+                            .foregroundStyle(Color(hex: Palette.inkSoft))
+                    }
+                    .padding(.top, 4)
+                    Button(action: onPlay) {
+                        Text("Play without the Mac")
+                            .font(.plexSans(15).weight(.semibold))
+                            .foregroundStyle(Color(hex: 0xF4F1FA))
+                            .padding(.horizontal, 18)
+                            .frame(minHeight: 44)
+                            .background(Color(hex: Palette.panel), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 72)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
+        .onAppear { if link.needsPairingFor != nil { typing = true } }
+        .onChange(of: link.needsPairingFor) { _, mac in if mac != nil { typing = true } }
+    }
+
+    private func pair() {
+        guard code.count == 6, let mac = link.needsPairingFor else { return }
+        typing = false
+        link.pair(mac: mac, code: code)
+        code = ""
     }
 }
 

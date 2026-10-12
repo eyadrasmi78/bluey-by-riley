@@ -1032,19 +1032,41 @@ final class CursorView: NSView {
     }
 }
 
-/// A click-through, transparent window over the whole main screen that shows the cursor.
+/// A click-through, transparent window over the union of all screens (multi-display).
+/// Engine space is window-local; incoming points are Quartz-global (main display top-left),
+/// so this class translates between the two at the boundary.
 final class CursorOverlay: NSObject {
     let view = CursorView(frame: .zero)
     private var window: NSWindow?
     private var displayLink: CADisplayLink?
     private var lastTime: CFTimeInterval = 0
+    /// The window's top-left in Quartz-global space; local = global − this.
+    private(set) var quartzOrigin = CGPoint.zero
+
+    private func local(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x - quartzOrigin.x, y: p.y - quartzOrigin.y) }
 
     /// Called every frame with the face the phone should show.
     var onFace: ((FaceState) -> Void)?
 
     var mode: CursorMode {
         get { view.engine.mode }
-        set { view.engine.setMode(newValue) }
+        set {
+            switch newValue {
+            case .pinned(let p): view.engine.setMode(.pinned(local(p)))
+            default: view.engine.setMode(newValue)
+            }
+        }
+    }
+
+    /// The thing he's pointing at (Quartz-global); the speech bubble floats above it.
+    var speechTargetGlobal: CGRect? {
+        get { view.speechTarget.map { CGRect(x: $0.minX + quartzOrigin.x, y: $0.minY + quartzOrigin.y,
+                                             width: $0.width, height: $0.height) } }
+        set { view.speechTarget = newValue.map { CGRect(origin: local($0.origin), size: $0.size) } }
+    }
+
+    func clickEffect(at point: CGPoint, right: Bool) {
+        view.clickEffect(at: local(point), right: right)
     }
 
     /// Where the cursor rests when nobody is pointing: tucked away with eyes on your mouse, or parked above the phone.
@@ -1070,12 +1092,17 @@ final class CursorOverlay: NSObject {
     }
 
     private func makeWindow() {
-        guard let screen = NSScreen.screens.first else { return }
+        guard let main = NSScreen.screens.first else { return }
+        // One window spanning every display, so the cursor can visit any screen he's looking at.
+        let union = NSScreen.screens.dropFirst().reduce(main.frame) { $0.union($1.frame) }
+        let newOrigin = CGPoint(x: union.minX, y: main.frame.height - union.maxY)
         if let window {
-            window.setFrame(screen.frame, display: true)
+            window.setFrame(union, display: true)
+            quartzOrigin = newOrigin
             return
         }
-        let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        quartzOrigin = newOrigin
+        let window = NSWindow(contentRect: union, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
