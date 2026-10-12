@@ -93,6 +93,17 @@ struct SoundButton: View {
                     .buttonStyle(.plain)
                 }
             }
+            Toggle(isOn: Binding(get: { live.wakePhraseEnabled }, set: { live.wakePhraseEnabled = $0; lastTouch = Date() })) {
+                Text("Wake on “Hey Bluey”")
+                    .font(.plexSans(14))
+                    .foregroundStyle(.white)
+            }
+            .tint(Color(hex: Palette.berry2))
+            if live.wakePhraseEnabled {
+                Text("He keeps an ear out while asleep. On-device only — uses a little battery.")
+                    .font(.plexSans(11))
+                    .foregroundStyle(Color(hex: Palette.inkSoft))
+            }
             if !link.connected {
                 Text("Connect to your Mac to talk to him.")
                     .font(.plexSans(12))

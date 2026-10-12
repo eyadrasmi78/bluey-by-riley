@@ -15,15 +15,119 @@ final class MacLink: ObservableObject {
     @Published private(set) var currentMac: String?
     /// The Mac picked in the speaker panel. Remembered, so the phone goes back to it on launch.
     @Published private(set) var preferredMac: String? = UserDefaults.standard.string(forKey: "preferredMac")
+    /// The Mac that needs a pairing code before it will talk to us (encryption is mandatory now).
+    @Published private(set) var needsPairingFor: String?
+    /// True after a pairing attempt failed (wrong code, or the window closed on the Mac).
+    @Published private(set) var pairingFailed = false
     /// Commands from the Mac, like "wake" and "sleep".
     var onCommand: ((String) -> Void)?
     private var waiting: [String: (Packet?) -> Void] = [:]
+
+    // MARK: Pairing
+
+    private var pairBrowser: NWBrowser?
+    private var pairLink: LineConnection?
+    private var pairingMac: String?
+
+    private static var linkKeys: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: "linkKeys") as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "linkKeys") }
+    }
+
+    static func linkKey(for mac: String) -> Data? {
+        linkKeys[mac].flatMap { Data(base64Encoded: $0) }
+    }
+
+    /// Starts pairing: find the Mac's pairing service, prove the 6-digit code (TLS-PSK), and
+    /// collect the long-term key it's handing out while its menu window is open.
+    func pair(mac: String, code: String) {
+        pairingFailed = false
+        needsPairingFor = nil
+        pairingMac = mac
+        pairLink?.cancel()
+        pairLink = nil
+        pairBrowser?.cancel()
+        let browser = NWBrowser(for: .bonjour(type: GooglyService.pairType, domain: nil), using: NWParameters())
+        browser.browseResultsChangedHandler = { [weak self] (results: Set<NWBrowser.Result>, _) in
+            guard let self, self.pairLink == nil, let pairingMac = self.pairingMac,
+                  let result = results.first(where: { Self.serviceName($0) == pairingMac }) else { return }
+            let link = LineConnection(NWConnection(to: result.endpoint,
+                                                   using: GooglySecurity.parameters(key: GooglySecurity.key(fromPairingCode: code),
+                                                                                    identity: GooglySecurity.pairIdentity)))
+            link.onState = { [weak self, weak link] state in
+                guard let self, let link else { return }
+                switch state {
+                case .ready:
+                    self.request(packet: Packet(command: "pair"), on: link) { [weak self] reply in
+                        guard let self else { return }
+                        if let key = reply?.text.flatMap({ Data(base64Encoded: $0) }) {
+                            var keys = Self.linkKeys
+                            keys[mac] = key.base64EncodedString()
+                            Self.linkKeys = keys
+                            self.endPairing()
+                            self.link?.cancel()
+                            self.link = nil
+                            self.choose(mac)
+                        } else {
+                            self.pairingFailed = true
+                            self.needsPairingFor = mac
+                            self.endPairing()
+                        }
+                    }
+                case .failed, .cancelled:
+                    guard self.pairLink === link else { return }
+                    self.pairingFailed = true
+                    self.needsPairingFor = mac
+                    self.endPairing()
+                default:
+                    break
+                }
+            }
+            link.start()
+            self.pairLink = link
+        }
+        pairBrowser = browser
+        browser.start(queue: .main)
+    }
+
+    private func request(packet: Packet, on link: LineConnection, _ done: @escaping (Packet?) -> Void) {
+        let id = UUID().uuidString
+        pairWaiting[id] = done
+        var packet = packet
+        packet.callID = id
+        link.onPacket = { [weak self] packet in
+            guard let self, let callID = packet.callID, let done = self.pairWaiting.removeValue(forKey: callID) else { return }
+            done(packet)
+        }
+        link.send(packet)
+    }
+
+    private var pairWaiting: [String: (Packet?) -> Void] = [:]
+
+    private func endPairing() {
+        pairingMac = nil
+        pairBrowser?.cancel()
+        pairBrowser = nil
+        pairLink?.cancel()
+        pairLink = nil
+        pairWaiting = [:]
+    }
+
+    /// Forget the stored key: the Mac will want the code again.
+    func unpair(_ mac: String) {
+        var keys = Self.linkKeys
+        keys.removeValue(forKey: mac)
+        Self.linkKeys = keys
+        if currentMac == mac { link?.cancel(); link = nil; connectIfNeeded() }
+    }
 
     var onFace: ((FaceState) -> Void)?
 
     private var browser: NWBrowser?
     private var link: LineConnection?
     private var retry: DispatchWorkItem?
+    /// Handshake failures per Mac: a rotated key fails forever, so after a few we ask to re-pair.
+    private var failures: [String: Int] = [:]
 
     func start() {
         guard browser == nil else { return }
@@ -84,15 +188,33 @@ final class MacLink: ObservableObject {
     private func connectIfNeeded() {
         guard link == nil, let results = browser?.browseResults, !results.isEmpty else { return }
         let result = results.first { Self.serviceName($0) == preferredMac } ?? results.first!
-        currentMac = Self.serviceName(result)
-        let link = LineConnection(NWConnection(to: result.endpoint, using: .googly))
+        let name = Self.serviceName(result)
+        currentMac = name
+        let params: NWParameters
+        if let name, let key = Self.linkKey(for: name) {
+            params = GooglySecurity.parameters(key: key, identity: GooglySecurity.linkIdentity)
+        } else {
+            // No key for this Mac: it will refuse the TLS handshake. Ask the user for the code.
+            needsPairingFor = name
+            return
+        }
+        needsPairingFor = nil
+        let link = LineConnection(NWConnection(to: result.endpoint, using: params))
         link.onState = { [weak self, weak link] state in
             guard let self, let link, link === self.link else { return }
             switch state {
             case .ready:
+                if let name = self.currentMac { self.failures[name] = 0 }
                 self.connected = true
                 link.send(Packet(hello: Self.deviceName))
             case .failed, .cancelled:
+                if let name = self.currentMac {
+                    self.failures[name, default: 0] += 1
+                    // A Mac that rotated its key ("Unpair All Phones") will never accept this one again.
+                    if self.failures[name, default: 0] >= 4, Self.linkKey(for: name) != nil {
+                        self.needsPairingFor = name
+                    }
+                }
                 self.connected = false
                 let waiting = self.waiting
                 self.waiting = [:]

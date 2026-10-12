@@ -23,11 +23,14 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_googly._tcp</string>
+		<string>_googlypair._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Bluey finds the Mac app on your Wi-Fi so the character can look where it points.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Talk to your blueberry. He listens while he's awake (double tap him to wake him up or put him to sleep).</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Lets him hear you say “Hey Bluey” and wake up, all on this device.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fredoka.ttf</string>
@@ -37,6 +40,10 @@
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiresFullScreen</key>

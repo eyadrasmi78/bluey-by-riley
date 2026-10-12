@@ -28,6 +28,8 @@ struct BlueySession: Codable, Identifiable, Equatable {
     var started: Date
     var ended: Date?
     var entries: [TranscriptEntry] = []
+    /// A name you gave it ("Design review"); shown in the list and used as the notes title.
+    var name: String?
     /// Where the Mac saved this session's meeting notes.
     var notesPath: String?
     var pending: [PendingChunk]?
@@ -58,7 +60,8 @@ struct BlueySession: Codable, Identifiable, Equatable {
     var exportText: String {
         let time = DateFormatter()
         time.dateFormat = "h:mm:ss a"
-        var lines = ["Bluey session, \(started.formatted(date: .abbreviated, time: .shortened))", ""]
+        var lines = ["\(name ?? "") \(started.formatted(date: .abbreviated, time: .shortened))"
+            .trimmingCharacters(in: .whitespaces), ""]
         for entry in displayEntries {
             let who: String
             switch entry.kind {
@@ -181,6 +184,17 @@ final class SessionStore: ObservableObject {
         guard let i = sessions.firstIndex(where: { $0.id == session }), sessions[i].notesPath != path else { return }
         sessions[i].notesPath = path
         scheduleSave(sync: false)
+    }
+
+    /// Give a session a name ("Design review"). Empty clears it. Syncs to the Mac's notes.
+    func rename(_ session: UUID, to name: String) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newName = trimmed.isEmpty ? nil : trimmed
+        guard sessions[i].name != newName else { return }
+        sessions[i].name = newName
+        dirty.insert(sessions[i].id)
+        scheduleSave(sync: true)
     }
 
     /// Recent words from this session, for a fresh connection to pick up where the last one left off.

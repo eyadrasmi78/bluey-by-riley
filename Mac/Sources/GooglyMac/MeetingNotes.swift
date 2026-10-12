@@ -47,7 +47,9 @@ enum MeetingNotes {
 
         In each session folder:
         - `notes.md`: the full transcript with timestamps and speaker labels, plus Riley's questions to Bluey, \
-        Bluey's replies and any research reports, in time order. Start here.
+        Bluey's replies and any research reports, in time order. Start here. A short summary is appended at \
+        the end once the session is finished.
+        - `summary.md`: the same summary on its own.
         - `session.json`: the same data, structured.
         - `audio/`: the raw recording, as five-minute AAC chunks.
 
@@ -135,20 +137,83 @@ enum MeetingNotes {
             try? data.write(to: folder.appendingPathComponent("session.json"), options: .atomic)
         }
         try? markdown(json, started: started).write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        summarizeSoon(json: json, folder: folder)
         return folder
+    }
+
+    /// Once a session has properly ended and nothing is left to transcribe, write a short summary
+    /// (a few bullets + action items) into the folder as summary.md and tagged onto notes.md.
+    /// Runs once per session, and only for transcripts worth summarizing.
+    private static func summarizeSoon(json: [String: Any], folder: URL) {
+        guard let id = json["id"] as? String, json["ended"] is Double else { return }
+        guard (json["transcribing"] as? Int ?? 0) == 0 else { return }  // chunks still landing
+        let lines = (json["entries"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
+        let transcript = lines.joined(separator: "\n")
+        guard transcript.count > 400 else { return }
+        var done = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
+        guard !done.contains(id) else { return }
+        done.append(id)
+        UserDefaults.standard.set(done, forKey: "summarizedSessions")
+        Task {
+            guard let key = Keychain.get(.openai) else { return }
+            do {
+                let summary = try await summarize(transcript: transcript,
+                                                  started: Date(timeIntervalSince1970: (json["started"] as? Double) ?? 0),
+                                                  name: json["name"] as? String, key: key)
+                guard !summary.isEmpty else { return }
+                try? summary.write(to: folder.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+                let notesURL = folder.appendingPathComponent("notes.md")
+                if let notes = try? String(contentsOf: notesURL, encoding: .utf8), !notes.contains("## Summary") {
+                    try? (notes + "\n## Summary\n\n" + summary + "\n").write(to: notesURL, atomically: true, encoding: .utf8)
+                }
+            } catch {
+                NSLog("Googly: summary failed: \(error)")
+            }
+        }
+    }
+
+    private static func summarize(transcript: String, started: Date, name: String?, key: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        let title = name.map { " called '\($0)'" } ?? ""
+        let body: [String: Any] = [
+            "model": "gpt-4o-mini",
+            "temperature": 0.3,
+            "messages": [
+                ["role": "system", "content": """
+                Summarize this meeting transcript for its owner. Reply with exactly two short sections:
+                **What happened** (up to 4 bullets, plain sentences) and **Action items** (bullets, or "None").
+                Speaker letters per five-minute chunk may not match across chunks — don't over-trust them.
+                """],
+                ["role": "user", "content": "Meeting\(title), started \(started.formatted()):\n\n\(String(transcript.prefix(28000)))"],
+            ],
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let content = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
+            throw NSError(domain: "Googly", code: 1, userInfo: [NSLocalizedDescriptionKey: "OpenAI didn't answer"])
+        }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func markdown(_ json: [String: Any], started: Date) -> String {
         let ended = (json["ended"] as? Double).map { Date(timeIntervalSince1970: $0) }
         let entries = json["entries"] as? [[String: Any]] ?? []
         let pending = json["transcribing"] as? Int ?? 0
+        let name = json["name"] as? String
         let day = DateFormatter()
         day.dateStyle = .full
         day.timeStyle = .short
         let clock = DateFormatter()
         clock.dateFormat = "h:mm:ss a"
 
-        var out = ["# Bluey session: \(day.string(from: started))", ""]
+        var out = ["# \(name ?? "Bluey session"): \(day.string(from: started))", ""]
         if let ended {
             let minutes = Int(ended.timeIntervalSince(started) / 60)
             out.append("Ended \(clock.string(from: ended)) (\(minutes / 60)h \(minutes % 60)m).")

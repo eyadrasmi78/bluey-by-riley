@@ -8,6 +8,21 @@ final class Settings {
 
     var onChange: (() -> Void)?
 
+    /// A user-rebound global shortcut ("keyCode,carbonModifiers") or nil for the default.
+    static func hotkeyOverride(for id: String) -> (keyCode: Int, modifiers: Int)? {
+        guard let raw = UserDefaults.standard.string(forKey: "hotkey." + id) else { return nil }
+        let parts = raw.split(separator: ",").compactMap { Int($0) }
+        return parts.count == 2 ? (parts[0], parts[1]) : nil
+    }
+
+    static func setHotkeyOverride(for id: String, _ combo: (keyCode: Int, modifiers: Int)?) {
+        if let combo {
+            UserDefaults.standard.set("\(combo.keyCode),\(combo.modifiers)", forKey: "hotkey." + id)
+        } else {
+            UserDefaults.standard.removeObject(forKey: "hotkey." + id)
+        }
+    }
+
     /// Cursor size in points (the design's default is 72).
     var cursorSize: Double {
         get { defaults.object(forKey: "cursorSize") as? Double ?? 72 }

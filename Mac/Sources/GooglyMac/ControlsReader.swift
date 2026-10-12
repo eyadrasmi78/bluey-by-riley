@@ -21,7 +21,10 @@ enum ControlsReader {
     private static let fieldKinds: Set<String> = ["text field", "text area", "combo box", "search field"]
 
     /// The frontmost app's name and its visible controls, in reading order. Stays within a small time budget.
-    static func read(screen: CGSize, limit: Int = 140, budget: TimeInterval = 0.45) -> (app: String?, controls: [Control]) {
+    /// AX frames are Quartz-global; `origin` (the captured display's global top-left) scopes the
+    /// walk to that display and translates control rects into display-local space.
+    static func read(screen: CGSize, origin: CGPoint = .zero,
+                     limit: Int = 140, budget: TimeInterval = 0.45) -> (app: String?, controls: [Control]) {
         guard let app = NSWorkspace.shared.frontmostApplication else { return (nil, []) }
         let name = app.localizedName
         guard ComputerControl.isTrusted else { return (name, []) }
@@ -37,7 +40,9 @@ enum ControlsReader {
         if let menuBar: AXUIElement = attribute(appElement, kAXMenuBarAttribute) { roots.append(menuBar) }
 
         let deadline = Date().addingTimeInterval(budget)
-        let visible = CGRect(origin: .zero, size: screen)
+        let visible = CGRect(origin: origin, size: screen)  // AX frames are global; origin is global
+        let local = { (rect: CGRect) in CGRect(x: rect.minX - origin.x, y: rect.minY - origin.y,
+                                               width: rect.width, height: rect.height) }
         var queue = roots
         var visited = 0
         var found: [(kind: String, label: String, rect: CGRect)] = []
@@ -55,7 +60,7 @@ enum ControlsReader {
                     let key = "\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height))"
                     if !seen.contains(key) {
                         seen.insert(key)
-                        found.append((kind, label, rect))
+                        found.append((kind, label, local(rect)))
                     }
                 }
             }
