@@ -393,6 +393,21 @@ final class LiveVoice: NSObject, ObservableObject {
         if wakePhraseEnabled { startWakePhrase() }
     }
 
+    /// Wake-phrase diagnostics (retrievable without a debugger: Documents/wake.log).
+    static func wakeLog(_ line: String) {
+        NSLog("GooglyWake: \(line)")
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("wake.log")
+        let row = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(row.utf8))
+            try? handle.close()
+        } else {
+            FileManager.default.createFile(atPath: url.path, contents: Data(row.utf8))
+        }
+    }
+
     private let wakeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let wakeEngine = AVAudioEngine()
     private var wakeRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -400,11 +415,30 @@ final class LiveVoice: NSObject, ObservableObject {
     private var wakeListening = false
     private var wakeRestart: DispatchWorkItem?
 
+    private var armingInFlight = false
+    /// Rolling window of phrase fragments — speech tasks get killed by the silence timeout mid-word,
+    /// so "Hey" and "Bluey" often land in different recognitions. Stitch the last few seconds.
+    private var wakeFragments: [(String, Date)] = []
+
+    private func heardWake(_ text: String) -> Bool {
+        let now = Date()
+        LiveVoice.wakeLog("heard “\(text)”")
+        wakeFragments.append((text, now))
+        wakeFragments = wakeFragments.filter { now.timeIntervalSince($0.1) < 6 }
+        let window = wakeFragments.map(\.0).joined(separator: " ")
+        return ["bluey", "blueberry", "blue bee", "hey louie", "hey blue", "hey luigi"].contains {
+            window.contains($0)
+        }
+    }
+
     private func startWakePhrase() {
-        guard wakePhraseEnabled, !wantAwake, socket == nil else { return }
+        guard wakePhraseEnabled, !wantAwake, socket == nil, !armingInFlight else { return }
+        armingInFlight = true
+        Self.wakeLog("arming wake-phrase listener")
         wakeListening = true
         SFSpeechRecognizer.requestAuthorization { status in
             DispatchQueue.main.async {
+                LiveVoice.wakeLog("speech auth = \(status.rawValue)")
                 guard status == .authorized else {
                     self.complain("“Hey Bluey” needs Speech Recognition: Settings → Privacy → Speech.")
                     self.wakeListening = false
@@ -412,6 +446,7 @@ final class LiveVoice: NSObject, ObservableObject {
                 }
                 AVAudioApplication.requestRecordPermission { granted in
                     DispatchQueue.main.async {
+                        LiveVoice.wakeLog("mic permission = \(granted)")
                         guard granted else { self.wakeListening = false; return }
                         self.beginWakeRecognition()
                     }
@@ -430,23 +465,29 @@ final class LiveVoice: NSObject, ObservableObject {
         #endif
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.contextualStrings = ["Hey Bluey", "Bluey", "blueberry", "wake up"]
         if wakeRecognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
+        Self.wakeLog("on-device = \(wakeRecognizer?.supportsOnDeviceRecognition == true)")
         wakeRequest = request
         wakeTask = wakeRecognizer?.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
             let text = result?.bestTranscription.formattedString.lowercased() ?? ""
-            if text.contains("bluey") || text.contains("blueberry") || text.contains("hey blue") {
+            if !text.isEmpty, self.heardWake(text) {
+                LiveVoice.wakeLog("MATCHED wake phrase (window)")
                 DispatchQueue.main.async { self.stopWakePhrase(); self.wake() }
                 return
             }
             if result?.isFinal == true || error != nil {
-                // A recognition task lives about a minute; quietly open a fresh one while he sleeps on.
+                LiveVoice.wakeLog("task ended (final=\(result?.isFinal == true), error=\(String(describing: error)))")
+                // Apple's silence timeout kills idle tasks after ~1 s: come right back so the
+                // next syllable of the wake phrase isn't lost between tasks.
+                let silenced = (error as NSError?)?.code == 1110
                 DispatchQueue.main.async {
                     guard self.wakeListening, !self.wantAwake, self.socket == nil else { return }
                     self.wakeRestart?.cancel()
                     let work = DispatchWorkItem { self.beginWakeRecognition() }
                     self.wakeRestart = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (silenced ? 0.15 : 1), execute: work)
                 }
             }
         }
@@ -454,8 +495,13 @@ final class LiveVoice: NSObject, ObservableObject {
         input.installTap(onBus: 0, bufferSize: 2048, format: input.outputFormat(forBus: 0)) { buffer, _ in
             request.append(buffer)
         }
+        Self.wakeLog("tap installed")
         wakeEngine.prepare()
-        do { try wakeEngine.start() } catch {
+        do {
+            try wakeEngine.start()
+            Self.wakeLog("engine running")
+        } catch {
+            Self.wakeLog("ENGINE FAILED: \(error.localizedDescription)")
             complain("Couldn't start the wake listener: \(error.localizedDescription)")
         }
     }
@@ -472,6 +518,8 @@ final class LiveVoice: NSObject, ObservableObject {
 
     func stopWakePhrase() {
         wakeListening = false
+        armingInFlight = false
+        wakeFragments = []
         stopWakeRecognition()
         #if os(iOS)
         if !wantAwake { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
