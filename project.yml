@@ -15,9 +15,11 @@ targets:
     sources:
       - path: iOS/Sources
       - path: Shared
+      - path: iOS/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.visionairy.googly.phone
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_NAME: Bluey
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
