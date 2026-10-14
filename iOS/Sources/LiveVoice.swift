@@ -394,17 +394,30 @@ final class LiveVoice: NSObject, ObservableObject {
     }
 
     /// Wake-phrase diagnostics (retrievable without a debugger: Documents/wake.log).
-    static func wakeLog(_ line: String) {
+    /// Non-sensitive lifecycle lines only in release builds — recognized speech text is DEBUG-only.
+    static func wakeLog(_ line: String, isSpeechText: Bool = false) {
+        #if DEBUG
+        #else
+        if isSpeechText { return }
+        #endif
         NSLog("GooglyWake: \(line)")
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("wake.log")
         let row = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
+        if let old = try? Data(contentsOf: url), old.count > 65_536 {
+            // Bound the log: keep the newest half.
+            let trimmed = old.suffix(32_768)
+            FileManager.default.createFile(atPath: url.path, contents: Data(trimmed) + Data(row.utf8),
+                                           attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+            return
+        }
         if let handle = try? FileHandle(forWritingTo: url) {
             handle.seekToEndOfFile()
             handle.write(Data(row.utf8))
             try? handle.close()
         } else {
-            FileManager.default.createFile(atPath: url.path, contents: Data(row.utf8))
+            FileManager.default.createFile(atPath: url.path, contents: Data(row.utf8),
+                                           attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         }
     }
 
@@ -437,7 +450,7 @@ final class LiveVoice: NSObject, ObservableObject {
 
     private func heardWake(_ text: String) -> Bool {
         let now = Date()
-        LiveVoice.wakeLog("heard “\(text)”")
+        LiveVoice.wakeLog("heard “\(text)”", isSpeechText: true)
         armAutoOff()  // real speech resets the auto-disarm clock
         wakeFragments.append((text, now))
         wakeFragments = wakeFragments.filter { now.timeIntervalSince($0.1) < 6 }
@@ -458,12 +471,17 @@ final class LiveVoice: NSObject, ObservableObject {
                 guard status == .authorized else {
                     self.complain("“Hey Bluey” needs Speech Recognition: Settings → Privacy → Speech.")
                     self.wakeListening = false
+                    self.armingInFlight = false  // allow a later start once permission is granted
                     return
                 }
                 AVAudioApplication.requestRecordPermission { granted in
                     DispatchQueue.main.async {
                         LiveVoice.wakeLog("mic permission = \(granted)")
-                        guard granted else { self.wakeListening = false; return }
+                        guard granted else {
+                            self.wakeListening = false
+                            self.armingInFlight = false  // allow a later start once permission is granted
+                            return
+                        }
                         self.beginWakeRecognition()
                     }
                 }
