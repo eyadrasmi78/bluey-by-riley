@@ -414,6 +414,21 @@ final class LiveVoice: NSObject, ObservableObject {
     private var wakeTask: SFSpeechRecognitionTask?
     private var wakeListening = false
     private var wakeRestart: DispatchWorkItem?
+    /// 10 quiet minutes while armed and the listener stands down on its own (he says why).
+    private var wakeAutoOff: DispatchWorkItem?
+
+    private func armAutoOff() {
+        wakeAutoOff?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.wakeListening, !self.wantAwake else { return }
+            LiveVoice.wakeLog("auto-disarm after 10 quiet minutes")
+            self.toast = nil
+            self.wakePhraseEnabled = false  // full setter: persists, updates UI, stops everything
+            self.complain("Wake listening paused after 10 quiet minutes — flip it back on in the speaker panel.")
+        }
+        wakeAutoOff = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 600, execute: work)
+    }
 
     private var armingInFlight = false
     /// Rolling window of phrase fragments — speech tasks get killed by the silence timeout mid-word,
@@ -423,6 +438,7 @@ final class LiveVoice: NSObject, ObservableObject {
     private func heardWake(_ text: String) -> Bool {
         let now = Date()
         LiveVoice.wakeLog("heard “\(text)”")
+        armAutoOff()  // real speech resets the auto-disarm clock
         wakeFragments.append((text, now))
         wakeFragments = wakeFragments.filter { now.timeIntervalSince($0.1) < 6 }
         let window = wakeFragments.map(\.0).joined(separator: " ")
@@ -468,6 +484,7 @@ final class LiveVoice: NSObject, ObservableObject {
         request.contextualStrings = ["Hey Bluey", "Bluey", "blueberry", "wake up"]
         if wakeRecognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
         Self.wakeLog("on-device = \(wakeRecognizer?.supportsOnDeviceRecognition == true)")
+        armAutoOff()
         wakeRequest = request
         wakeTask = wakeRecognizer?.recognitionTask(with: request) { [weak self] result, error in
             guard let self else { return }
@@ -520,6 +537,8 @@ final class LiveVoice: NSObject, ObservableObject {
         wakeListening = false
         armingInFlight = false
         wakeFragments = []
+        wakeAutoOff?.cancel()
+        wakeAutoOff = nil
         stopWakeRecognition()
         #if os(iOS)
         if !wantAwake { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
