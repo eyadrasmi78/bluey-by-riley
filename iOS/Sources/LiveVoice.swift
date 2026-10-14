@@ -386,6 +386,7 @@ final class LiveVoice: NSObject, ObservableObject {
 
     /// Start listening if the setting is on and he's asleep. Called on launch and return to foreground.
     func applyWakePhraseSetting() {
+        wakePaused = false  // a user is clearly around; resume if the setting is on
         if wakePhraseEnabled, !wantAwake, state == .asleep { startWakePhrase() }
     }
 
@@ -427,17 +428,20 @@ final class LiveVoice: NSObject, ObservableObject {
     private var wakeTask: SFSpeechRecognitionTask?
     private var wakeListening = false
     private var wakeRestart: DispatchWorkItem?
-    /// 10 quiet minutes while armed and the listener stands down on its own (he says why).
+    /// True after 10 quiet minutes: the listener stands down, but the setting stays on and
+    /// he starts listening again the next time you open the app.
+    @Published private(set) var wakePaused = false
     private var wakeAutoOff: DispatchWorkItem?
 
     private func armAutoOff() {
         wakeAutoOff?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.wakeListening, !self.wantAwake else { return }
-            LiveVoice.wakeLog("auto-disarm after 10 quiet minutes")
-            self.toast = nil
-            self.wakePhraseEnabled = false  // full setter: persists, updates UI, stops everything
-            self.complain("Wake listening paused after 10 quiet minutes — flip it back on in the speaker panel.")
+            LiveVoice.wakeLog("auto-pause after 10 quiet minutes")
+            self.wakeListening = false
+            self.wakePaused = true
+            self.stopWakeRecognition()
+            self.complain("Wake listening paused after 10 quiet minutes — open the app to resume.")
         }
         wakeAutoOff = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 600, execute: work)
@@ -553,6 +557,7 @@ final class LiveVoice: NSObject, ObservableObject {
 
     func stopWakePhrase() {
         wakeListening = false
+        wakePaused = false
         armingInFlight = false
         wakeFragments = []
         wakeAutoOff?.cancel()
