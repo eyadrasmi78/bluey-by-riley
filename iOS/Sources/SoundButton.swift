@@ -100,7 +100,9 @@ struct SoundButton: View {
             }
             .tint(Color(hex: Palette.berry2))
             if live.wakePhraseEnabled {
-                Text("He keeps an ear out while asleep. On-device only — uses a little battery.")
+                Text(live.wakePaused
+                     ? "Paused — it was quiet for a while. Opening the app (or saying hi from a session) resumes him."
+                     : "He keeps an ear out while asleep. On-device only — pauses after 10 quiet minutes, resumes when you open the app.")
                     .font(.plexSans(11))
                     .foregroundStyle(Color(hex: Palette.inkSoft))
             }
