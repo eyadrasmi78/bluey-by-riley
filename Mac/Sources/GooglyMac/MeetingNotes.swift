@@ -187,6 +187,7 @@ enum MeetingNotes {
                 Summarize this meeting transcript for its owner. Reply with exactly two short sections:
                 **What happened** (up to 4 bullets, plain sentences) and **Action items** (bullets, or "None").
                 Speaker letters per five-minute chunk may not match across chunks — don't over-trust them.
+                Write the summary in the language the transcript mostly uses (Arabic stays Arabic), keeping the two English section titles.
                 """],
                 ["role": "user", "content": "Meeting\(title), started \(started.formatted()):\n\n\(String(transcript.prefix(28000)))"],
             ],

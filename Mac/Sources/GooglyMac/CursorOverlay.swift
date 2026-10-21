@@ -915,6 +915,7 @@ final class CursorView: NSView {
         let fontSize: CGFloat = length <= 50 ? 21 : length <= 110 ? 19 : 17
         let style = NSMutableParagraphStyle()
         style.alignment = .center
+        style.baseWritingDirection = .natural  // Arabic replies lay out right-to-left
         style.lineSpacing = 1.5
         let text = NSAttributedString(string: caption, attributes: [
             .font: Fonts.display(fontSize),

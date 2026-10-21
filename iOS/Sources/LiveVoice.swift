@@ -428,23 +428,35 @@ final class LiveVoice: NSObject, ObservableObject {
     private var wakeTask: SFSpeechRecognitionTask?
     private var wakeListening = false
     private var wakeRestart: DispatchWorkItem?
-    /// True after 10 quiet minutes: the listener stands down, but the setting stays on and
+    /// True after a quiet stretch: the listener stands down, but the setting stays on and
     /// he starts listening again the next time you open the app.
     @Published private(set) var wakePaused = false
     private var wakeAutoOff: DispatchWorkItem?
 
+    /// Minutes of silence before the wake listener pauses. 0 = never pause.
+    var wakeQuietLimitMinutes: Int {
+        get { UserDefaults.standard.object(forKey: "wakeQuietLimit") as? Int ?? 10 }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "wakeQuietLimit")
+            objectWillChange.send()
+            if wakeListening { armAutoOff() }  // pick up the new timeout right away
+        }
+    }
+
     private func armAutoOff() {
         wakeAutoOff?.cancel()
+        let minutes = wakeQuietLimitMinutes
+        guard minutes > 0 else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.wakeListening, !self.wantAwake else { return }
-            LiveVoice.wakeLog("auto-pause after 10 quiet minutes")
+            LiveVoice.wakeLog("auto-pause after \(minutes) quiet minutes")
             self.wakeListening = false
             self.wakePaused = true
             self.stopWakeRecognition()
-            self.complain("Wake listening paused after 10 quiet minutes — open the app to resume.")
+            self.complain("Wake listening paused after \(minutes) quiet minutes — open the app to resume.")
         }
         wakeAutoOff = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 600, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .init(minutes * 60), execute: work)
     }
 
     private var armingInFlight = false

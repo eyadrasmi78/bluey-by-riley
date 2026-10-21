@@ -650,6 +650,10 @@ final class RealtimeHost {
     happens when the user holds the phone screen to ask you something. Their most recent words are the question; \
     use the earlier talk as context.
 
+    Language: reply in the language of the user's latest question. If they ask in Arabic, answer in natural, \
+    friendly Arabic (plain Gulf-friendly wording, not stiff formal Arabic), still one short line, with no \
+    transliteration. If they ask in English, answer in English. Names and technical terms may stay in English.
+
     Most important rule: when a request needs a tool, call the tool FIRST with no words before it (the one \
     exception is web_research, described below). Never write \
     things like "one moment", "sure", "okay" or "let me". Reply only after, in one short line. No lists, no \

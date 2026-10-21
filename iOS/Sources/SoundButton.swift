@@ -102,9 +102,15 @@ struct SoundButton: View {
             if live.wakePhraseEnabled {
                 Text(live.wakePaused
                      ? "Paused — it was quiet for a while. Opening the app (or saying hi from a session) resumes him."
-                     : "He keeps an ear out while asleep. On-device only — pauses after 10 quiet minutes, resumes when you open the app.")
+                     : "He keeps an ear out while asleep. On-device only — resumes when you open the app.")
                     .font(.plexSans(11))
                     .foregroundStyle(Color(hex: Palette.inkSoft))
+                Picker("Pause after", selection: Binding(get: { live.wakeQuietLimitMinutes }, set: { live.wakeQuietLimitMinutes = $0; lastTouch = Date() })) {
+                    ForEach([5, 10, 30, 60], id: \.self) { Text("\($0) quiet min").tag($0) }
+                    Text("Never").tag(0)
+                }
+                .font(.plexSans(12))
+                .tint(Color(hex: Palette.berry2))
             }
             if !link.connected {
                 Text("Connect to your Mac to talk to him.")
