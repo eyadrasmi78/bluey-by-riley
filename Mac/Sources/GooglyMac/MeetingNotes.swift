@@ -164,6 +164,7 @@ enum MeetingNotes {
                                                   name: json["name"] as? String, key: key)
                 guard !summary.isEmpty else { return }
                 try? summary.write(to: folder.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+                writeActionItems(summary: summary, folder: folder)
                 let notesURL = folder.appendingPathComponent("notes.md")
                 if let notes = try? String(contentsOf: notesURL, encoding: .utf8), !notes.contains("## Summary") {
                     try? (notes + "\n## Summary\n\n" + summary + "\n").write(to: notesURL, atomically: true, encoding: .utf8)

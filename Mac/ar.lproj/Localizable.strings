@@ -75,3 +75,17 @@
 "Wake Up / Follow" = "إيقاظ / تتبّع";
 "Wake Up and Talk" = "استيقظ وتكلّم";
 "What He Did Recently" = "ما فعله مؤخرًا";
+"Search Meeting Notes…" = "بحث في ملاحظات الاجتماعات…";
+"Open Action Items" = "فتح بنود العمل";
+"Export Meeting as PDF…" = "تصدير اجتماع بصيغة PDF…";
+"Search Meeting Notes" = "بحث في ملاحظات الاجتماعات";
+"Searches every session's transcript, summary and Bluey's answers." = "يبحث في نص كل جلسة وملخصها وإجابات Bluey.";
+"Search" = "بحث";
+"No matches" = "لا توجد نتائج";
+"%lld matches" = "%lld نتيجة";
+"Open Notes" = "فتح الملاحظات";
+"Export Meeting as PDF" = "تصدير اجتماع بصيغة PDF";
+"Pick a session. The PDF is saved next to its notes." = "اختر جلسة. يُحفظ ملف PDF بجانب ملاحظاتها.";
+"Export" = "تصدير";
+"No meeting notes yet." = "لا توجد ملاحظات اجتماعات بعد.";
+"Couldn't make the PDF." = "تعذّر إنشاء ملف PDF.";

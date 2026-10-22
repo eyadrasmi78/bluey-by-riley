@@ -308,6 +308,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func searchNotes() {
+        NSApp.activate(ignoringOtherApps: true)
+        let ask = NSAlert()
+        ask.messageText = T("Search Meeting Notes")
+        ask.informativeText = T("Searches every session's transcript, summary and Bluey's answers.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        ask.accessoryView = field
+        ask.addButton(withTitle: T("Search"))
+        ask.addButton(withTitle: T("Cancel"))
+        ask.window.initialFirstResponder = field
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        let hits = MeetingNotes.search(field.stringValue)
+        let result = NSAlert()
+        guard !hits.isEmpty else {
+            result.messageText = T("No matches")
+            result.addButton(withTitle: T("OK"))
+            result.runModal()
+            return
+        }
+        result.messageText = String(format: T("%lld matches"), hits.count)
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 560, height: 26))
+        for hit in hits {
+            popup.addItem(withTitle: "\(MeetingNotes.title(of: hit.folder).prefix(30)) · \(hit.line.prefix(70))")
+        }
+        result.accessoryView = popup
+        result.addButton(withTitle: T("Open Notes"))
+        result.addButton(withTitle: T("Close"))
+        if result.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(hits[popup.indexOfSelectedItem].folder.appendingPathComponent("notes.md"))
+        }
+    }
+
+    @objc private func openActionItems() {
+        NSWorkspace.shared.open(MeetingNotes.rebuildAllActionItems())
+    }
+
+    @objc private func exportMeetingPDF() {
+        NSApp.activate(ignoringOtherApps: true)
+        let folders = MeetingNotes.sessionFolders()
+        let alert = NSAlert()
+        guard !folders.isEmpty else {
+            alert.messageText = T("No meeting notes yet.")
+            alert.addButton(withTitle: T("OK"))
+            alert.runModal()
+            return
+        }
+        alert.messageText = T("Export Meeting as PDF")
+        alert.informativeText = T("Pick a session. The PDF is saved next to its notes.")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 420, height: 26))
+        for folder in folders { popup.addItem(withTitle: MeetingNotes.title(of: folder)) }
+        alert.accessoryView = popup
+        alert.addButton(withTitle: T("Export"))
+        alert.addButton(withTitle: T("Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let pdf = MeetingNotes.exportPDF(folder: folders[popup.indexOfSelectedItem]) {
+            NSWorkspace.shared.activateFileViewerSelecting([pdf])
+        } else {
+            let failed = NSAlert()
+            failed.messageText = T("Couldn't make the PDF.")
+            failed.addButton(withTitle: T("OK"))
+            failed.runModal()
+        }
+    }
+
     @objc private func openNotes() {
         try? FileManager.default.createDirectory(at: MeetingNotes.root, withIntermediateDirectories: true)
         NSWorkspace.shared.open(MeetingNotes.root)
@@ -470,6 +534,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Phone Sits Under", phoneMenu))
 
         menu.addItem(item("Open Meeting Notes", #selector(openNotes)))
+        menu.addItem(item("Search Meeting Notes…", #selector(searchNotes)))
+        menu.addItem(item("Open Action Items", #selector(openActionItems)))
+        menu.addItem(item("Export Meeting as PDF…", #selector(exportMeetingPDF)))
         menu.addItem(item("Personality…", #selector(editPersonality)))
         menu.addItem(item("OpenAI Key…", #selector(editKeys)))
         menu.addItem(item("Pair a Phone…", #selector(pairPhone)))
