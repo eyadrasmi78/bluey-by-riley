@@ -409,6 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restartIfAwake()  // his tools change with this switch
     }
 
+    @objc private func toggleAskRisky() { settings.askBeforeRisky.toggle() }
+
     @objc private func allowComputerControl() {
         ComputerControl.askForPermission()
         ComputerControl.openAccessibilitySettings()
@@ -492,6 +494,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(control)
         if settings.computerControl && !ComputerControl.isTrusted {
             menu.addItem(item("Allow Clicking and Typing (Accessibility)…", #selector(allowComputerControl)))
+        }
+        if settings.computerControl {
+            let ask = item("Ask Before Risky Actions", #selector(toggleAskRisky))
+            ask.state = settings.askBeforeRisky ? .on : .off
+            menu.addItem(ask)
         }
         menu.addItem(item("Stop Him", #selector(stopActions), key: "s"))
         menu.addItem(item("Recent Actions…", #selector(showActionLog)))

@@ -70,6 +70,12 @@ final class Settings {
         set { defaults.set(newValue, forKey: "computerControl"); onChange?() }
     }
 
+    /// Pops up on the Mac before anything hard to undo (sending, deleting, buying, Return, closing…).
+    var askBeforeRisky: Bool {
+        get { defaults.object(forKey: "askBeforeRisky") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "askBeforeRisky"); onChange?() }
+    }
+
     /// How the cursor's path shows while it flies.
     var trail: PointerTrail {
         get { PointerTrail(rawValue: defaults.string(forKey: "trail") ?? "") ?? .comet }

@@ -89,3 +89,12 @@
 "Export" = "تصدير";
 "No meeting notes yet." = "لا توجد ملاحظات اجتماعات بعد.";
 "Couldn't make the PDF." = "تعذّر إنشاء ملف PDF.";
+"Ask Before Risky Actions" = "اسأل قبل الإجراءات الحساسة";
+"Bluey wants to do this" = "يريد Bluey أن يفعل هذا";
+"Allow" = "سماح";
+"Deny" = "رفض";
+"Click “%@”" = "النقر على «%@»";
+"This looks like it sends, deletes, buys, posts or grants something." = "يبدو أن هذا يرسل أو يحذف أو يشتري أو ينشر أو يمنح صلاحية.";
+"Type text and press Return" = "كتابة نص ثم الضغط على Return";
+"Press %@" = "الضغط على %@";
+"This can submit, delete or close something." = "قد يؤدي هذا إلى إرسال شيء أو حذفه أو إغلاقه.";

@@ -233,6 +233,13 @@ final class RealtimeHost {
                 ActionLog.record(name, detail, outcome: "refused: \(refusal)")
                 return (refusal, nil)
             }
+            if Settings.shared.askBeforeRisky, let risk = riskDescription(name, args) {
+                let allowed = await ActionRisk.approve(risk.title, detail: risk.detail)
+                if !allowed {
+                    ActionLog.record(name, detail, outcome: "declined by the user")
+                    return ("The user declined this on the Mac. Don't retry it; ask what they'd like instead.", nil)
+                }
+            }
             let result = await runAction(name, args)
             ActionLog.record(name, detail, outcome: result.text)
             return result
@@ -316,6 +323,31 @@ final class RealtimeHost {
         case "open_app": return args["name"] as? String ?? "?"
         case "open_url": return args["url"] as? String ?? "?"
         default: return ""
+        }
+    }
+
+    /// What to show in the approval popup for a risky action (nil when it doesn't need asking).
+    private func riskDescription(_ name: String, _ args: [String: Any]) -> (title: String, detail: String)? {
+        switch name {
+        case "click":
+            guard let target = spot(args, id: "target_id", x: "x", y: "y") else { return nil }
+            var label = target.name
+            if label == "that spot", let snapshot {  // clicked by position: judge by what's under it
+                let local = CGPoint(x: target.point.x - snapshot.origin.x, y: target.point.y - snapshot.origin.y)
+                label = snapshot.target(near: local)?.text ?? ""
+            }
+            guard ActionRisk.clickRisk(label) != nil else { return nil }
+            return (String(format: T("Click “%@”"), label), T("This looks like it sends, deletes, buys, posts or grants something."))
+        case "type_text":
+            let text = args["text"] as? String ?? ""
+            guard ActionRisk.typeRisk(text: text, pressReturn: args["press_return"] as? Bool ?? false) else { return nil }
+            return (T("Type text and press Return"), "“\(text.prefix(200))\(text.count > 200 ? "…" : "")”")
+        case "press_keys":
+            let keys = args["keys"] as? String ?? ""
+            guard ActionRisk.keysRisk(keys) else { return nil }
+            return (String(format: T("Press %@"), keys), T("This can submit, delete or close something."))
+        default:
+            return nil
         }
     }
 
