@@ -111,9 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let id = item.representedObject as? String else { return }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Press a New Shortcut"
-        alert.informativeText = "Hold at least one of ⌃ ⌥ ⇧ ⌘ plus a key. Delete restores the default, Escape cancels."
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = T("Press a New Shortcut")
+        alert.informativeText = T("Hold at least one of ⌃ ⌥ ⇧ ⌘ plus a key. Delete restores the default, Escape cancels.")
+        alert.addButton(withTitle: T("Cancel"))
         rebindMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return nil }
             let code = Int(event.keyCode)
@@ -152,6 +152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleFollow() {
         settings.followMouse.toggle()
         overlay.goHome()
+    }
+
+    /// Switches Bluey's own menus and dialogs between English and Arabic (without touching macOS settings), then relaunches.
+    @objc private func toggleLanguage() {
+        let arabicNow = Bundle.main.preferredLocalizations.first == "ar"
+        UserDefaults.standard.set([arabicNow ? "en" : "ar"], forKey: "AppleLanguages")
+        UserDefaults.standard.synchronize()
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     @objc private func dock() { overlay.goHome() }
@@ -226,21 +238,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let code = GooglySecurity.newPairingCode()
         server.beginPairing(code: code)
         let alert = NSAlert()
-        alert.messageText = "Pair a Phone — \(GooglySecurity.formatPairingCode(code))"
-        alert.informativeText = "On the phone, open Bluey and type this code when asked. "
-            + "The code works once, for 10 minutes (or until 5 wrong tries), and only your phone will know the link key afterwards. "
-            + "Every message between the devices is encrypted."
-        alert.addButton(withTitle: "Done")
+        alert.messageText = T("Pair a Phone") + " — \(GooglySecurity.formatPairingCode(code))"
+        alert.informativeText = T("On the phone, open Bluey and type this code when asked. The code works once, for 10 minutes (or until 5 wrong tries), and only your phone will know the link key afterwards. Every message between the devices is encrypted.")
+        alert.addButton(withTitle: T("Done"))
         alert.runModal()
     }
 
     @objc private func unpairPhones() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Unpair all phones?"
-        alert.informativeText = "Every phone will need the pairing code again to connect."
-        alert.addButton(withTitle: "Unpair All")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = T("Unpair all phones?")
+        alert.informativeText = T("Every phone will need the pairing code again to connect.")
+        alert.addButton(withTitle: T("Unpair All"))
+        alert.addButton(withTitle: T("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Keychain.set(.linkKey, GooglySecurity.newLinkKey().base64EncodedString())
         server.restart()
@@ -262,17 +272,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                       let latest = list.first?["sha"] as? String else { throw URLError(.cannotParseResponse) }
                 if let bundled, latest == bundled {
-                    alert.messageText = "Bluey is up to date"
-                    alert.informativeText = "This build is the latest main (\(bundled.prefix(8)))."
-                    alert.addButton(withTitle: "Nice")
+                    alert.messageText = T("Bluey is up to date")
+                    alert.informativeText = String(format: T("This build is the latest main (%@)."), String(bundled.prefix(8)))
+                    alert.addButton(withTitle: T("Nice"))
                     alert.runModal()
                     return
                 }
-                alert.messageText = "A newer Bluey exists"
-                alert.informativeText = "Latest main is \(latest.prefix(8))" + (bundled.map { "; this build is \($0.prefix(8))" } ?? "") +
-                    ". Updating merges origin/main into your local copy and rebuilds the Mac app — the phone app then needs a rebuild in Xcode."
-                alert.addButton(withTitle: "Run Updater in Terminal")
-                alert.addButton(withTitle: "Later")
+                alert.messageText = T("A newer Bluey exists")
+                alert.informativeText = String(format: T("Latest main is %@; this build is %@. Updating fast-forwards your local copy to origin/main (after showing you the changes) and rebuilds the Mac app — the phone app then needs a rebuild in Xcode."), String(latest.prefix(8)), bundled.map { String($0.prefix(8)) } ?? "?")
+                alert.addButton(withTitle: T("Run Updater in Terminal"))
+                alert.addButton(withTitle: T("Later"))
                 if alert.runModal() == .alertFirstButtonReturn {
                     // App sits at <repo>/build/Bluey.app; the updater is <repo>/scripts/update.sh.
                     let repo = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
@@ -281,8 +290,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     guard FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git").path),
                           FileManager.default.fileExists(atPath: script.path) else {
                         let note = NSAlert()
-                        note.messageText = "Can't update from here"
-                        note.informativeText = "Run Bluey from its project folder's build/ directory to use the updater."
+                        note.messageText = T("Can't update from here")
+                        note.informativeText = T("Run Bluey from its project folder's build/ directory to use the updater.")
                         note.runModal()
                         return
                     }
@@ -291,9 +300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }
             } catch {
-                alert.messageText = "Couldn't check right now"
+                alert.messageText = T("Couldn't check right now")
                 alert.informativeText = error.localizedDescription
-                alert.addButton(withTitle: "OK")
+                alert.addButton(withTitle: T("OK"))
                 alert.runModal()
             }
         }
@@ -307,8 +316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func showActionLog() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "What He Did Recently"
-        alert.informativeText = "Every time he clicked, typed, pressed keys, scrolled, dragged or opened something — newest first. The full log is ~/Library/Application Support/Googly/actions.log."
+        alert.messageText = T("What He Did Recently")
+        alert.informativeText = T("Every time he clicked, typed, pressed keys, scrolled, dragged or opened something — newest first. The full log is ~/Library/Application Support/Googly/actions.log.")
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
@@ -321,8 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         text.textContainerInset = NSSize(width: 6, height: 6)
         scroll.documentView = text
         alert.accessoryView = scroll
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Clear the Log")
+        alert.addButton(withTitle: T("Close"))
+        alert.addButton(withTitle: T("Clear the Log"))
         if alert.runModal() == .alertSecondButtonReturn { ActionLog.clear() }
     }
 
@@ -351,8 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func editPersonality() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "His Personality"
-        alert.informativeText = "Describe who he is and how he talks. How he looks at and points at your screen stays built in."
+        alert.messageText = T("His Personality")
+        alert.informativeText = T("Describe who he is and how he talks. How he looks at and points at your screen stays built in.")
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 220))
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
@@ -364,9 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         text.textContainerInset = NSSize(width: 6, height: 6)
         scroll.documentView = text
         alert.accessoryView = scroll
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Reset to Default")
+        alert.addButton(withTitle: T("Save"))
+        alert.addButton(withTitle: T("Cancel"))
+        alert.addButton(withTitle: T("Reset to Default"))
         alert.window.initialFirstResponder = text
         switch alert.runModal() {
         case .alertFirstButtonReturn: RealtimeHost.personality = text.string
@@ -379,13 +388,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func editKeys() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "OpenAI API Key"
-        alert.informativeText = "Saved privately on this Mac (not in the project files). The phone only ever gets short-lived keys."
+        alert.messageText = T("OpenAI API Key")
+        alert.informativeText = T("Saved privately on this Mac (not in the project files). The phone only ever gets short-lived keys.")
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = Keychain.get(.openai) == nil ? "sk-…" : "Key saved. Paste a new one to replace it."
         alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: T("Save"))
+        alert.addButton(withTitle: T("Cancel"))
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -402,11 +411,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         let phones = server.phoneNames
-        let status = NSMenuItem(title: phones.isEmpty ? "Waiting for the phone app…" : "Phone connected: \(phones.joined(separator: ", "))",
+        let status = NSMenuItem(title: phones.isEmpty ? T("Waiting for the phone app…") : String(format: T("Phone connected: %@"), phones.joined(separator: ", ")),
                                 action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
-        let wake = NSMenuItem(title: host.awake ? "Go to Sleep (Follow Mode)" : "Wake Up and Talk",
+        let wake = NSMenuItem(title: host.awake ? T("Go to Sleep (Follow Mode)") : T("Wake Up and Talk"),
                               action: #selector(toggleAwake), keyEquivalent: " ")
         wake.keyEquivalentModifierMask = [.option]
         wake.target = self
@@ -444,7 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let sizeMenu = NSMenu()
         for (name, size) in [("Small", 48), ("Medium", 72), ("Large", 96), ("Huge", 120)] {
-            let s = item("\(name) (\(size) pt)", #selector(setSize(_:)))
+            let s = item("\(T(name)) (\(size) pt)", #selector(setSize(_:)))
             s.tag = size
             s.state = Int(settings.cursorSize) == size ? .on : .off
             sizeMenu.addItem(s)
@@ -487,7 +496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shortcuts = NSMenu()
         for def in hotKeyDefs() {
             let combo = Settings.hotkeyOverride(for: def.id) ?? (keyCode: def.keyCode, modifiers: def.modifiers)
-            let m = item("\(def.title) — \(HotKeys.describe(keyCode: combo.keyCode, modifiers: combo.modifiers))",
+            let m = item("\(T(def.title)) — \(HotKeys.describe(keyCode: combo.keyCode, modifiers: combo.modifiers))",
                          #selector(rebindShortcut(_:)))
             m.representedObject = def.id
             m.keyEquivalent = ""
@@ -496,19 +505,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Shortcuts", shortcuts))
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Bluey", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let arabicNow = Bundle.main.preferredLocalizations.first == "ar"
+        menu.addItem(item(arabicNow ? "English" : "العربية", #selector(toggleLanguage)))
+        menu.addItem(NSMenuItem(title: T("Quit Bluey"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     /// Menu item that shows its global shortcut (⌃⌥ + key) when given one.
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let item = NSMenuItem(title: T(title), action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = [.control, .option]
         item.target = self
         return item
     }
 
     private func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: T(title), action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
     }

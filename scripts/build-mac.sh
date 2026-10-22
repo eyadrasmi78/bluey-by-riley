@@ -14,6 +14,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$(swift build -c release --show-bin-path)/GooglyMac" "$APP/Contents/MacOS/GooglyMac"
 cp Mac/Info.plist "$APP/Contents/Info.plist"
 cp Shared/Fonts/*.ttf "$APP/Contents/Resources/"
+cp -R Mac/ar.lproj "$APP/Contents/Resources/"
 # Which commit this build came from ("Check for Updates…" compares against upstream main).
 git rev-parse HEAD > "$APP/Contents/Resources/commit.txt" 2>/dev/null || true
 

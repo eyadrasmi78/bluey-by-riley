@@ -1,4 +1,7 @@
 import Foundation
+
+/// Looks a string up in the app's Localizable.strings (Arabic when the Mac is set to Arabic; otherwise the English text).
+func T(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 import GooglyShared
 
 /// User choices from the menu bar, kept between launches.
