@@ -25,7 +25,8 @@ enum MeetingNotes {
         let fm = FileManager.default
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
         writeReadmeIfNeeded()
-        let tag = String(session.prefix(8)).lowercased()
+        let tag = String(session.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(8)).lowercased()  // phone-supplied: no path characters
+        guard !tag.isEmpty else { return root.appendingPathComponent("unknown", isDirectory: true) }
         if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil))?
             .first(where: { $0.lastPathComponent.hasSuffix(tag) }) {
             return existing

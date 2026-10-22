@@ -31,9 +31,10 @@ final class PhoneServer {
     }
 
     /// Open the pairing window (menu "Pair a Phone…"): a short-lived second listener whose TLS PSK
-    /// is stretched from the 6-digit code. Whoever types the code gets the long-term link key.
+    /// is derived from the pairing code. Whoever types the code gets the long-term link key.
     func beginPairing(code: String, seconds: TimeInterval = 600) {
         endPairing()
+        pairingFailures = 0
         do {
             let listener = try NWListener(using: GooglySecurity.parameters(key: GooglySecurity.key(fromPairingCode: code),
                                                                            identity: GooglySecurity.pairIdentity))
@@ -41,10 +42,24 @@ final class PhoneServer {
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else { return }
                 let link = LineConnection(connection)
-                link.onPacket = { [weak link] packet in
+                var handshakeDone = false
+                link.onState = { [weak self] state in
+                    switch state {
+                    case .ready: handshakeDone = true
+                    case .failed where !handshakeDone:
+                        // A wrong code fails the TLS handshake. Five misses and the window closes.
+                        guard let self else { return }
+                        self.pairingFailures += 1
+                        if self.pairingFailures >= 5 { self.endPairing() }
+                    default: break
+                    }
+                }
+                link.onPacket = { [weak self, weak link] packet in
                     guard packet.command == "pair" else { return }
                     link?.send(Packet(command: "paired", callID: packet.callID,
                                       text: Self.linkKey().base64EncodedString()))
+                    // Single use: once the key is delivered, the code stops working.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.endPairing() }
                 }
                 link.start()
                 self.pairingClients.append(link)
@@ -61,6 +76,7 @@ final class PhoneServer {
     }
 
     private var pairingClients: [LineConnection] = []
+    private var pairingFailures = 0
 
     /// Close the pairing window (also called when it expires).
     func endPairing() {

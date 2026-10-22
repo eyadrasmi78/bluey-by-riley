@@ -15,27 +15,28 @@ struct PairingView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 if let mac = link.needsPairingFor {
-                    // Found the Mac, but we have no key for it: the six-digit menu code opens the door.
+                    // Found the Mac, but we have no key for it: the menu code opens the door.
                     Text("Pair with \(mac)")
                         .font(.fredoka(32))
                         .foregroundStyle(Color(hex: 0xF4F1FA))
                     Text("On the Mac, open Bluey in the menu bar and choose “Pair a Phone…”. "
-                         + "It shows a six-digit code. This keeps everything between the devices encrypted.")
+                         + "It shows a 10-character code. This keeps everything between the devices encrypted.")
                         .font(.plexSans(16))
                         .foregroundStyle(Color(hex: Palette.inkSoft))
                         .frame(maxWidth: 400, alignment: .leading)
                     HStack(spacing: 12) {
-                        TextField("123456", text: $code)
-                            .keyboardType(.numberPad)
+                        TextField("ABCDE-FGHJK", text: $code)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
                             .font(.plexMono(24))
                             .multilineTextAlignment(.center)
                             .focused($typing)
                             .foregroundStyle(Color(hex: 0xF4F1FA))
-                            .frame(width: 170, height: 52)
+                            .frame(width: 230, height: 52)
                             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                             .onChange(of: code) { _, new in
-                                code = String(new.filter(\.isNumber).prefix(6))
-                                if code.count == 6 { pair() }
+                                code = GooglySecurity.formatPairingCode(new)
+                                if GooglySecurity.normalizePairingCode(code).count == GooglySecurity.pairingCodeLength { pair() }
                             }
                         Button { pair() } label: {
                             Text("Pair")
@@ -88,7 +89,7 @@ struct PairingView: View {
     }
 
     private func pair() {
-        guard code.count == 6, let mac = link.needsPairingFor else { return }
+        guard GooglySecurity.normalizePairingCode(code).count == GooglySecurity.pairingCodeLength, let mac = link.needsPairingFor else { return }
         typing = false
         link.pair(mac: mac, code: code)
         code = ""

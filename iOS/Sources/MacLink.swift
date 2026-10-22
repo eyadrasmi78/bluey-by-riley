@@ -38,7 +38,7 @@ final class MacLink: ObservableObject {
         linkKeys[mac].flatMap { Data(base64Encoded: $0) }
     }
 
-    /// Starts pairing: find the Mac's pairing service, prove the 6-digit code (TLS-PSK), and
+    /// Starts pairing: find the Mac's pairing service, prove the pairing code (TLS-PSK), and
     /// collect the long-term key it's handing out while its menu window is open.
     func pair(mac: String, code: String) {
         pairingFailed = false

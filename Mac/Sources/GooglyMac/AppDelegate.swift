@@ -221,9 +221,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let code = GooglySecurity.newPairingCode()
         server.beginPairing(code: code)
         let alert = NSAlert()
-        alert.messageText = "Pair a Phone — \(code)"
+        alert.messageText = "Pair a Phone — \(GooglySecurity.formatPairingCode(code))"
         alert.informativeText = "On the phone, open Bluey and type this code when asked. "
-            + "The code works for 10 minutes, and only your phone will know the link key afterwards. "
+            + "The code works once, for 10 minutes (or until 5 wrong tries), and only your phone will know the link key afterwards. "
             + "Every message between the devices is encrypted."
         alert.addButton(withTitle: "Done")
         alert.runModal()

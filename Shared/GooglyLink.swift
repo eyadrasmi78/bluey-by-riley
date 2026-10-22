@@ -18,7 +18,7 @@ private let pskSuite = SSLCipherSuite(TLS_PSK_WITH_AES_128_GCM_SHA256)
 /// Encryption and pairing for the phone↔Mac link.
 ///
 /// The link is TLS with a pre-shared key on top of the plain TCP settings below: a phone that
-/// doesn't hold the Mac's key can't even handshake. Pairing once types the 6-digit code the Mac's
+/// doesn't hold the Mac's key can't even handshake. Pairing once types the pairing code the Mac's
 /// menu bar shows; that brief TLS-PSK channel (key stretched from the code) delivers the Mac's
 /// long-term link key, which the phone stores and offers from then on. Short codes are brute-
 /// forceable from a sniffed pairing handshake, which is exactly why daily traffic never uses
@@ -33,13 +33,29 @@ public enum GooglySecurity {
         SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
     }
 
+    /// No 0/O/1/I/L, so a code read off the Mac screen can't be mistyped.
+    static let codeAlphabet = Array("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
+    public static let pairingCodeLength = 10
+
+    /// 10 characters from 31 symbols (about 49 bits): too many to guess offline from a sniffed handshake.
     public static func newPairingCode() -> String {
-        String(format: "%06d", Int.random(in: 0..<1_000_000))
+        String((0..<pairingCodeLength).map { _ in codeAlphabet.randomElement()! })
     }
 
-    /// Stretches the 6-digit pairing code into the PSK used only during pairing.
+    /// Uppercases and drops separators and look-alikes, so "abcde-fghjk" works.
+    public static func normalizePairingCode(_ code: String) -> String {
+        String(code.uppercased().filter(codeAlphabet.contains).prefix(pairingCodeLength))
+    }
+
+    /// For display: ABCDE-FGHJK.
+    public static func formatPairingCode(_ code: String) -> String {
+        let c = normalizePairingCode(code)
+        return c.count > 5 ? c.prefix(5) + "-" + c.dropFirst(5) : c
+    }
+
+    /// Derives the pairing PSK from the pairing code into the PSK used only during pairing.
     public static func key(fromPairingCode code: String) -> Data {
-        let normalized = code.filter(\.isNumber)
+        let normalized = normalizePairingCode(code)
         let derived = HKDF<SHA256>.deriveKey(
             inputKeyMaterial: SymmetricKey(data: Data(normalized.utf8)),
             salt: Data("bluey-pair".utf8), info: Data(), outputByteCount: 32)
