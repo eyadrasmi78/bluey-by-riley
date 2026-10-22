@@ -100,7 +100,7 @@ final class LiveVoice: NSObject, ObservableObject {
         AVAudioApplication.requestRecordPermission { granted in
             DispatchQueue.main.async {
                 guard granted else {
-                    self.complain("Microphone is off for Bluey — turn it on in Settings → Privacy.")
+                    self.complain(L("Microphone is off for Bluey — turn it on in Settings → Privacy."))
                     self.wantAwake = false
                     self.setState(.asleep)
                     return
@@ -110,7 +110,7 @@ final class LiveVoice: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         guard self.state == .waking else { return }
                         guard let token else {
-                            self.complain("Can't start — your Mac is away, or it has no OpenAI key (menu bar → Bluey → OpenAI Key…).")
+                            self.complain(L("Can't start — your Mac is away, or it has no OpenAI key (menu bar → Bluey → OpenAI Key…)."))
                             self.wantAwake = false
                             self.setState(.asleep)
                             return
@@ -202,7 +202,7 @@ final class LiveVoice: NSObject, ObservableObject {
         do {
             try startAudio()
         } catch {
-            complain("Couldn't start the microphone: \(error.localizedDescription)")
+            complain(L("Couldn't start the microphone: \(error.localizedDescription)"))
             sleep()
             return
         }
@@ -221,7 +221,7 @@ final class LiveVoice: NSObject, ObservableObject {
         responseActive = false
         toolsRunning = 0
         guard wantAwake, let requestToken else { return }
-        if attempt == 0 { complain("Connection dropped — reconnecting. He keeps listening and recording.") }
+        if attempt == 0 { complain(L("Connection dropped — reconnecting. He keeps listening and recording.")) }
         reconnecting = true
         requestToken { [weak self] token in
             DispatchQueue.main.async {
@@ -321,7 +321,7 @@ final class LiveVoice: NSObject, ObservableObject {
             if (error?["code"] as? String) == "input_audio_buffer_commit_empty" { awaitingQuestion = false; return }
             let message = (error?["message"] as? String) ?? "Something went wrong."
             NSLog("Googly realtime error: \(message)")
-            complain("Bluey ran into a problem: \(message)")
+            complain(L("Bluey ran into a problem: \(message)"))
 
         default:
             break
@@ -397,7 +397,9 @@ final class LiveVoice: NSObject, ObservableObject {
     /// Wake-phrase diagnostics (retrievable without a debugger: Documents/wake.log).
     /// Non-sensitive lifecycle lines only in release builds — recognized speech text is DEBUG-only.
     static func wakeLog(_ line: String, isSpeechText: Bool = false) {
+        // Recognized speech only lands on disk in a DEBUG build with the "wakeDebug" default switched on.
         #if DEBUG
+        if isSpeechText, !UserDefaults.standard.bool(forKey: "wakeDebug") { return }
         #else
         if isSpeechText { return }
         #endif
@@ -422,7 +424,18 @@ final class LiveVoice: NSObject, ObservableObject {
         }
     }
 
-    private let wakeRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    /// Which language the wake listener hears: "en" ("Hey Bluey") or "ar" ("هلا بلوي").
+    var wakeLanguage: String {
+        get { UserDefaults.standard.string(forKey: "wakeLanguage") ?? "en" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "wakeLanguage")
+            objectWillChange.send()
+            if wakeListening { wakeFragments = []; beginWakeRecognition() }  // switch recognizer right away
+        }
+    }
+    private var wakeRecognizer: SFSpeechRecognizer? {
+        SFSpeechRecognizer(locale: Locale(identifier: wakeLanguage == "ar" ? "ar-SA" : "en-US"))
+    }
     private let wakeEngine = AVAudioEngine()
     private var wakeRequest: SFSpeechAudioBufferRecognitionRequest?
     private var wakeTask: SFSpeechRecognitionTask?
@@ -453,7 +466,7 @@ final class LiveVoice: NSObject, ObservableObject {
             self.wakeListening = false
             self.wakePaused = true
             self.stopWakeRecognition()
-            self.complain("Wake listening paused after \(minutes) quiet minutes — open the app to resume.")
+            self.complain(L("Wake listening paused after \(minutes) quiet minutes — open the app to resume."))
         }
         wakeAutoOff = work
         DispatchQueue.main.asyncAfter(deadline: .now() + .init(minutes * 60), execute: work)
@@ -471,7 +484,8 @@ final class LiveVoice: NSObject, ObservableObject {
         wakeFragments.append((text, now))
         wakeFragments = wakeFragments.filter { now.timeIntervalSince($0.1) < 6 }
         let window = wakeFragments.map(\.0).joined(separator: " ")
-        return ["bluey", "blueberry", "blue bee", "hey louie", "hey blue", "hey luigi"].contains {
+        return ["bluey", "blueberry", "blue bee", "hey louie", "hey blue", "hey luigi",
+                "بلوي", "بلووي", "بلو", "بلوبيري", "بلوبري"].contains {
             window.contains($0)
         }
     }
@@ -485,7 +499,7 @@ final class LiveVoice: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 LiveVoice.wakeLog("speech auth = \(status.rawValue)")
                 guard status == .authorized else {
-                    self.complain("“Hey Bluey” needs Speech Recognition: Settings → Privacy → Speech.")
+                    self.complain(L("“Hey Bluey” needs Speech Recognition: Settings → Privacy → Speech."))
                     self.wakeListening = false
                     self.armingInFlight = false  // allow a later start once permission is granted
                     return
@@ -515,7 +529,8 @@ final class LiveVoice: NSObject, ObservableObject {
         #endif
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
-        request.contextualStrings = ["Hey Bluey", "Bluey", "blueberry", "wake up"]
+        request.contextualStrings = wakeLanguage == "ar" ? ["هلا بلوي", "يا بلوي", "بلوي", "بلوبيري"]
+                                                         : ["Hey Bluey", "Bluey", "blueberry", "wake up"]
         if wakeRecognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
         Self.wakeLog("on-device = \(wakeRecognizer?.supportsOnDeviceRecognition == true)")
         armAutoOff()
@@ -553,7 +568,7 @@ final class LiveVoice: NSObject, ObservableObject {
             Self.wakeLog("engine running")
         } catch {
             Self.wakeLog("ENGINE FAILED: \(error.localizedDescription)")
-            complain("Couldn't start the wake listener: \(error.localizedDescription)")
+            complain(L("Couldn't start the wake listener: \(error.localizedDescription)"))
         }
     }
 

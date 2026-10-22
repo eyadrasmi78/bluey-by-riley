@@ -21,12 +21,12 @@ git rev-parse HEAD > "$APP/Contents/Resources/commit.txt" 2>/dev/null || true
 # Screen Recording and Microphone permissions across rebuilds. Otherwise sign ad hoc.
 # Use the certificate's hash, since the same name can appear twice in the keychain.
 IDENTITY=$(security find-identity -v -p codesigning | grep '"Apple Development' | grep -v REVOKED | head -1 | awk '{print $2}' || true)
-codesign --force --sign "${IDENTITY:--}" "$APP"
+codesign --force --options runtime --sign "${IDENTITY:--}" "$APP"
 # macOS refuses to launch an app whose certificate Apple has revoked, even when the keychain
 # still lists it as valid. Fall back to ad hoc signing then (permissions reset on each rebuild).
 if [[ "$(spctl -a -vv "$APP" 2>&1 || true)" == *REVOKED* ]]; then
   echo "Signing certificate is revoked; signing ad hoc instead"
-  codesign --force --sign - "$APP"
+  codesign --force --options runtime --sign - "$APP"
 fi
 
 rm -rf "$FINAL"

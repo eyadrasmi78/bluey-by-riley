@@ -236,6 +236,8 @@ final class SessionStore: ObservableObject {
     func delete(_ id: UUID) {
         if id == currentID { currentID = nil }
         sessions.removeAll { $0.id == id }
+        // Also remove any recorded audio still on the phone for this session.
+        try? FileManager.default.removeItem(at: ChunkRecorder.folder.appendingPathComponent(id.uuidString))
         save()
     }
 
@@ -262,6 +264,10 @@ final class SessionStore: ObservableObject {
     private func save() {
         saveWork?.cancel()
         guard let data = try? JSONEncoder().encode(sessions) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var url = fileURL
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        try? url.setResourceValues(excluded)
     }
 }

@@ -10,8 +10,12 @@ struct PairingView: View {
 
     var body: some View {
         HStack(spacing: 56) {
-            SleepyBlob()
-                .frame(width: 220, height: 190)
+            // While typing, the landscape keyboard covers the lower half: drop the blob and the long text
+            // so the code field and Pair button stay visible above it.
+            if !typing {
+                SleepyBlob()
+                    .frame(width: 220, height: 190)
+            }
 
             VStack(alignment: .leading, spacing: 14) {
                 if let mac = link.needsPairingFor {
@@ -19,13 +23,15 @@ struct PairingView: View {
                     Text("Pair with \(mac)")
                         .font(.fredoka(32))
                         .foregroundStyle(Color(hex: 0xF4F1FA))
-                    Text("On the Mac, open Bluey in the menu bar and choose “Pair a Phone…”. "
-                         + "It shows a 10-character code. This keeps everything between the devices encrypted.")
-                        .font(.plexSans(16))
-                        .foregroundStyle(Color(hex: Palette.inkSoft))
-                        .frame(maxWidth: 400, alignment: .leading)
+                    if !typing {
+                        Text(L("On the Mac, open Bluey in the menu bar and choose “Pair a Phone…”. It shows a 10-character code. This keeps everything between the devices encrypted."))
+                            .font(.plexSans(16))
+                            .foregroundStyle(Color(hex: Palette.inkSoft))
+                            .frame(maxWidth: 400, alignment: .leading)
+                    }
                     HStack(spacing: 12) {
                         TextField("ABCDE-FGHJK", text: $code)
+                            .keyboardType(.asciiCapable)  // the code is Latin letters, even on an Arabic keyboard setup
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                             .font(.plexMono(24))
@@ -47,7 +53,7 @@ struct PairingView: View {
                                 .background(Color(hex: Palette.berry1), in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(.plain)
-                        .disabled(code.count != 6)
+                        .disabled(GooglySecurity.normalizePairingCode(code).count != GooglySecurity.pairingCodeLength)
                     }
                     if link.pairingFailed {
                         Text("That code didn't work — the window may have closed. Check the Mac's menu for a fresh one.")
@@ -82,8 +88,10 @@ struct PairingView: View {
             }
         }
         .padding(.horizontal, 72)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, typing ? 24 : 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: typing ? .top : .center)
         .background(Color.black)
+        .ignoresSafeArea(.keyboard)
         .onAppear { if link.needsPairingFor != nil { typing = true } }
         .onChange(of: link.needsPairingFor) { _, mac in if mac != nil { typing = true } }
     }

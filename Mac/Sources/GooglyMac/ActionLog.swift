@@ -15,9 +15,15 @@ enum ActionLog {
     /// One line per action (or refusal). `detail` is whatever identifies it: the thing clicked,
     /// the keys pressed, the app opened. `outcome` is how it ended, one short line.
     static func record(_ action: String, _ detail: String, outcome: String) {
+        // Tool arguments can contain newlines/tabs, which would forge extra log lines; and the screen
+        // text that comes back with an action doesn't belong on disk. Keep one short, clean line.
+        func clean(_ s: String, _ limit: Int) -> String {
+            let flat = (s.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")
+                .replacingOccurrences(of: "\t", with: " ")
+            return String(flat.prefix(limit))
+        }
         let stamp = ISO8601DateFormatter().string(from: Date())
-        let line = "\(stamp)\t\(action)\t\(detail)\t\(outcome)\n"
-        let clipped = line.prefix(500) + (line.count > 500 ? "…\n" : "")
+        let clipped = "\(stamp)\t\(clean(action, 20))\t\(clean(detail, 80))\t\(clean(outcome, 100))\n"
         if let handle = try? FileHandle(forWritingTo: fileURL) {
             handle.seekToEndOfFile()
             handle.write(Data(clipped.utf8))

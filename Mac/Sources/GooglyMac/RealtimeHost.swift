@@ -105,6 +105,7 @@ final class RealtimeHost {
         }
     }
 
+    #if DEBUG
     /// GOOGLY_DEMO_RESEARCH="question": runs a real research call and saves pictures of the card.
     func demoResearch(_ question: String, out: String) {
         Task { @MainActor in
@@ -127,6 +128,7 @@ final class RealtimeHost {
             exit(0)
         }
     }
+    #endif
 
     func setAwake(_ on: Bool) {
         awake = on
@@ -307,8 +309,7 @@ final class RealtimeHost {
             let point = number(args["x"]).flatMap { x in number(args["y"]).map { y in "@\(Int(x)),\(Int(y))" } }
             return id ?? point ?? "?"
         case "type_text":
-            let text = args["text"] as? String ?? ""
-            return "\"\(text.prefix(60))\(text.count > 60 ? "…" : "")\""
+            return "\((args["text"] as? String ?? "").count) characters"  // never log what was typed
         case "press_keys": return args["keys"] as? String ?? "?"
         case "scroll": return "\(args["direction"] as? String ?? "down")"
         case "drag": return "drag"
@@ -363,9 +364,6 @@ final class RealtimeHost {
         return nil
     }
 
-    /// Shortcuts that log out, lock the screen or force-quit apps are left to the user.
-    private static let refusedShortcuts: Set<String> = ["cmd+shift+q", "cmd+option+shift+q", "ctrl+cmd+q", "cmd+option+escape", "cmd+option+esc"]
-
     private func runAction(_ name: String, _ args: [String: Any]) async -> (text: String, image: String?) {
         takeControl()
         defer { afterAction() }
@@ -391,6 +389,9 @@ final class RealtimeHost {
         case "type_text":
             let text = args["text"] as? String ?? ""
             guard !text.isEmpty else { return ("Nothing to type.", nil) }
+            if ComputerControl.frontmostIsTerminal {
+                return ("That's a terminal. Ask the user to type there themselves.", nil)
+            }
             let field = ControlsReader.focusedField()
             if field.secure {
                 return ("That's a password field. Ask the user to type it themselves.", nil)
@@ -402,8 +403,11 @@ final class RealtimeHost {
             } else if engine.isHome {
                 overlay.mode = .docked
             }
-            await ComputerControl.type(text) { chunk in view.typedEffect(chunk) }
+            // Tab or Return can move the cursor into a password field mid-text: check again after each one.
+            let typedAll = await ComputerControl.type(text, stillSafe: { !ControlsReader.focusedField().secure && !ComputerControl.frontmostIsTerminal }) { chunk in view.typedEffect(chunk) }
+            if !typedAll { return ("I stopped: the cursor moved into a password field (or a terminal). Ask the user to take over.", nil) }
             if args["press_return"] as? Bool ?? false {
+                if ControlsReader.focusedField().secure { return ("Typed it, but I won't press Return in a password field.", nil) }
                 try? await Task.sleep(for: .milliseconds(120))
                 _ = try? ComputerControl.press("return")
                 view.bubble("↩")
@@ -414,10 +418,11 @@ final class RealtimeHost {
 
         case "press_keys":
             let keys = (args["keys"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            let normalized = keys.lowercased().replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "command", with: "cmd").replacingOccurrences(of: "alt", with: "option")
-            if Self.refusedShortcuts.contains(normalized) {
-                return ("I won't press that one (it logs out, locks or force-quits). Ask the user to do it.", nil)
+            if ComputerControl.isRefused(keys) {
+                return ("I won't press that one (it logs out, locks, quits apps or empties the Trash). Ask the user to do it.", nil)
+            }
+            if ComputerControl.frontmostIsTerminal, ComputerControl.isReturn(keys) {
+                return ("That's a terminal. Ask the user to run commands themselves.", nil)
             }
             if engine.isHome { overlay.mode = .docked }
             do {

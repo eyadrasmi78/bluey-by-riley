@@ -1,5 +1,7 @@
 import Foundation
+import CryptoKit
 import Network
+import Security
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -29,9 +31,42 @@ final class MacLink: ObservableObject {
     private var pairLink: LineConnection?
     private var pairingMac: String?
 
+    /// Link keys live in the iOS Keychain (not UserDefaults, which ends up in plain backups). Readable after the
+    /// first unlock so background sessions can reconnect with the screen locked.
     private static var linkKeys: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: "linkKeys") as? [String: String] ?? [:] }
-        set { UserDefaults.standard.set(newValue.isEmpty ? nil : newValue, forKey: "linkKeys") }
+        get {
+            if let data = readKeychain(), let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] { return dict }
+            // One-time move from the old UserDefaults storage.
+            if let old = UserDefaults.standard.dictionary(forKey: "linkKeys") as? [String: String], !old.isEmpty {
+                writeKeychain(old)
+                UserDefaults.standard.removeObject(forKey: "linkKeys")
+                return old
+            }
+            return [:]
+        }
+        set { writeKeychain(newValue) }
+    }
+
+    private static let keychainQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "co.visionairy.googly.linkkeys",
+        kSecAttrAccount as String: "linkKeys",
+    ]
+
+    private static func readKeychain() -> Data? {
+        var query = keychainQuery
+        query[kSecReturnData as String] = true
+        var out: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+    }
+
+    private static func writeKeychain(_ dict: [String: String]) {
+        SecItemDelete(keychainQuery as CFDictionary)
+        guard !dict.isEmpty, let data = try? JSONSerialization.data(withJSONObject: dict) else { return }
+        var item = keychainQuery
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        SecItemAdd(item as CFDictionary, nil)
     }
 
     static func linkKey(for mac: String) -> Data? {
@@ -54,13 +89,15 @@ final class MacLink: ObservableObject {
             let link = LineConnection(NWConnection(to: result.endpoint,
                                                    using: GooglySecurity.parameters(key: GooglySecurity.key(fromPairingCode: code),
                                                                                     identity: GooglySecurity.pairIdentity)))
+            let ephemeral = Curve25519.KeyAgreement.PrivateKey()  // the link key comes back sealed to this
             link.onState = { [weak self, weak link] state in
                 guard let self, let link else { return }
                 switch state {
                 case .ready:
-                    self.request(packet: Packet(command: "pair"), on: link) { [weak self] reply in
+                    let offer = Packet(command: "pair", text: ephemeral.publicKey.rawRepresentation.base64EncodedString())
+                    self.request(packet: offer, on: link) { [weak self] reply in
                         guard let self else { return }
-                        if let key = reply?.text.flatMap({ Data(base64Encoded: $0) }) {
+                        if let key = reply?.text.flatMap({ GooglySecurity.openLinkKey($0, with: ephemeral) }) {
                             var keys = Self.linkKeys
                             keys[mac] = key.base64EncodedString()
                             Self.linkKeys = keys

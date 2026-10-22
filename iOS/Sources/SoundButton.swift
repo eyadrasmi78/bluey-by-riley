@@ -101,10 +101,16 @@ struct SoundButton: View {
             .tint(Color(hex: Palette.berry2))
             if live.wakePhraseEnabled {
                 Text(live.wakePaused
-                     ? "Paused — it was quiet for a while. Opening the app (or saying hi from a session) resumes him."
-                     : "He keeps an ear out while asleep. On-device only — resumes when you open the app.")
+                     ? L("Paused — it was quiet for a while. Opening the app (or saying hi from a session) resumes him.")
+                     : L("He keeps an ear out while asleep. On-device only — resumes when you open the app."))
                     .font(.plexSans(11))
                     .foregroundStyle(Color(hex: Palette.inkSoft))
+                Picker("Wake language", selection: Binding(get: { live.wakeLanguage }, set: { live.wakeLanguage = $0; lastTouch = Date() })) {
+                    Text("English").tag("en")
+                    Text("العربية").tag("ar")
+                }
+                .font(.plexSans(12))
+                .tint(Color(hex: Palette.berry2))
                 Picker("Pause after", selection: Binding(get: { live.wakeQuietLimitMinutes }, set: { live.wakeQuietLimitMinutes = $0; lastTouch = Date() })) {
                     ForEach([5, 10, 30, 60], id: \.self) { Text("\($0) quiet min").tag($0) }
                     Text("Never").tag(0)

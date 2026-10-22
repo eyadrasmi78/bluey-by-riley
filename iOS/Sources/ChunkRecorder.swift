@@ -63,6 +63,12 @@ final class ChunkRecorder {
     private func openChunk(sessionID: UUID, format: AVAudioFormat) {
         let folder = Self.folder.appendingPathComponent(sessionID.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Meeting audio shouldn't ride along in backups, and is protected once the phone has been unlocked
+        // after boot (background recording needs to keep writing while the screen is locked).
+        var audioRoot = Self.folder
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        try? audioRoot.setResourceValues(excluded)
         chunkIndex += 1
         let url = folder.appendingPathComponent(String(format: "chunk-%03d.m4a", chunkIndex))
         let settings: [String: Any] = [
@@ -74,6 +80,8 @@ final class ChunkRecorder {
         file = try? AVAudioFile(forWriting: url, settings: settings,
                                 commonFormat: format.commonFormat, interleaved: format.isInterleaved)
         fileFormat = format
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                               ofItemAtPath: url.path)
         chunkURL = url
         chunkStarted = Date()
     }

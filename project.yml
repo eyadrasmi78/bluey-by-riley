@@ -38,7 +38,10 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSLocalNetworkUsageDescription: Bluey finds the Mac app on your Wi-Fi so the character can look where it points.
         NSMicrophoneUsageDescription: Talk to your blueberry. He listens while he's awake (double tap him to wake him up or put him to sleep).
-        NSSpeechRecognitionUsageDescription: Lets him hear you say “Hey Bluey” and wake up, all on this device.
+        NSSpeechRecognitionUsageDescription: Lets him hear you say “Hey Bluey” and wake up. Wake-word listening runs on this device; sessions you start are sent to your Mac and OpenAI.
+        CFBundleLocalizations:
+          - en
+          - ar
         UIBackgroundModes:
           - audio
         NSBonjourServices:

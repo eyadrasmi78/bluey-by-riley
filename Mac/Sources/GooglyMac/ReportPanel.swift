@@ -124,7 +124,7 @@ private struct ReportCard: View {
                                     .font(.custom("IBM Plex Mono", size: 11))
                                     .foregroundStyle(soft)
                                     .padding(.top, 4)
-                                ForEach(Array(report.sources.enumerated()), id: \.offset) { _, source in
+                                ForEach(Array(report.sources.filter { ["http", "https"].contains($0.url.scheme?.lowercased() ?? "") }.enumerated()), id: \.offset) { _, source in
                                     Link(destination: source.url) {
                                         Text(source.title)
                                             .font(.custom("IBM Plex Sans", size: 13))

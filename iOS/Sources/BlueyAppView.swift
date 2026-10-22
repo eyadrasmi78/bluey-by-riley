@@ -291,8 +291,8 @@ struct SessionDetailView: View {
                         .buttonStyle(.plain)
                     }
                     if let session {
-                        Text("\(SessionRow.duration(session.duration)) · \(session.questionCount) asked"
-                             + (session.transcribing > 0 ? " · transcribing \(session.transcribing) chunk\(session.transcribing == 1 ? "" : "s")…" : ""))
+                        Text(L("\(SessionRow.duration(session.duration)) · \(session.questionCount) asked")
+                             + (session.transcribing > 0 ? " · " + L("transcribing \(session.transcribing) chunk(s)…") : ""))
                             .font(.plexMono(11))
                             .foregroundStyle(Color(hex: Palette.inkSoft))
                     }
@@ -302,7 +302,7 @@ struct SessionDetailView: View {
                     Button { copyPrompt(session) } label: {
                         HStack(spacing: 6) {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            Text(copied ? "Copied" : "Copy prompt for agent")
+                            Text(copied ? L("Copied") : L("Copy prompt for agent"))
                         }
                         .font(.plexSans(13).weight(.semibold))
                         .padding(.horizontal, 14)

@@ -35,31 +35,42 @@ final class PhoneServer {
     func beginPairing(code: String, seconds: TimeInterval = 600) {
         endPairing()
         pairingFailures = 0
+        pairingDelivered = false
         do {
             let listener = try NWListener(using: GooglySecurity.parameters(key: GooglySecurity.key(fromPairingCode: code),
                                                                            identity: GooglySecurity.pairIdentity))
             listener.service = NWListener.Service(name: Host.current().localizedName ?? "Mac", type: GooglyService.pairType)
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else { return }
+                guard self.pairingClients.count < 2 else { connection.cancel(); return }  // no pile-ups of guesses
                 let link = LineConnection(connection)
                 var handshakeDone = false
-                link.onState = { [weak self] state in
+                var counted = false
+                link.onState = { [weak self, weak link] state in
+                    guard let self else { return }
                     switch state {
                     case .ready: handshakeDone = true
-                    case .failed where !handshakeDone:
-                        // A wrong code fails the TLS handshake. Five misses and the window closes.
-                        guard let self else { return }
+                    case .failed, .cancelled:
+                        if let link { self.pairingClients.removeAll { $0 === link } }
+                        // A wrong code fails the TLS handshake; a stalled attempt is cancelled before it is
+                        // ready. Both count. Five misses and the window closes.
+                        guard !handshakeDone, !counted, self.pairListener != nil else { return }
+                        counted = true
                         self.pairingFailures += 1
                         if self.pairingFailures >= 5 { self.endPairing() }
                     default: break
                     }
                 }
                 link.onPacket = { [weak self, weak link] packet in
-                    guard packet.command == "pair" else { return }
-                    link?.send(Packet(command: "paired", callID: packet.callID,
-                                      text: Self.linkKey().base64EncodedString()))
-                    // Single use: once the key is delivered, the code stops working.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.endPairing() }
+                    guard let self, packet.command == "pair", !self.pairingDelivered,
+                          let phonePublic = packet.text.flatMap({ Data(base64Encoded: $0) }),
+                          let sealed = GooglySecurity.sealLinkKey(Self.linkKey(), forPhonePublicKey: phonePublic) else { return }
+                    // Single use: the first successful request gets the key, and the door shuts immediately.
+                    self.pairingDelivered = true
+                    self.pairListener?.cancel()
+                    self.pairListener = nil
+                    link?.send(Packet(command: "paired", callID: packet.callID, text: sealed))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.endPairing() }
                 }
                 link.start()
                 self.pairingClients.append(link)
@@ -77,6 +88,7 @@ final class PhoneServer {
 
     private var pairingClients: [LineConnection] = []
     private var pairingFailures = 0
+    private var pairingDelivered = false
 
     /// Close the pairing window (also called when it expires).
     func endPairing() {
@@ -113,6 +125,13 @@ final class PhoneServer {
     private func scheduleRestart() {
         listener?.cancel()
         listener = nil
+        // Key rotation (or a listener failure) must also drop phones that are already connected:
+        // an established TLS session would otherwise keep working with the old key.
+        phones.values.forEach { $0.link.cancel() }
+        pending.values.forEach { $0.cancel() }
+        phones = [:]
+        pending = [:]
+        endPairing()
         restartWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.start() }
         restartWork = work

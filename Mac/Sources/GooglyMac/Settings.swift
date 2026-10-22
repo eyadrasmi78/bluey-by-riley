@@ -58,7 +58,12 @@ final class Settings {
 
     /// Lets him click, type, press keys and open things when you ask.
     var computerControl: Bool {
-        get { defaults.object(forKey: "computerControl") as? Bool ?? true }
+        // Off for new installs; anyone who has already let him act (there is an action log) keeps it on.
+        get {
+            defaults.object(forKey: "computerControl") as? Bool
+                ?? FileManager.default.fileExists(atPath: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("Googly/actions.log").path)
+        }
         set { defaults.set(newValue, forKey: "computerControl"); onChange?() }
     }
 

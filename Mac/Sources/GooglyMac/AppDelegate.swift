@@ -22,8 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         overlay.onFace = { [weak self] face in self?.server.send(face) }
         overlay.start()
+        #if DEBUG
         showDemoBubbleIfAsked()
+        #endif
         checkPermissions()
+        #if DEBUG
         if let path = ProcessInfo.processInfo.environment["GOOGLY_DEMO_TRANSCRIBE"], let audio = FileManager.default.contents(atPath: path) {
             // Transcribes an audio file into a throwaway notes folder, prints the lines and quits.
             Task {
@@ -38,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let question = ProcessInfo.processInfo.environment["GOOGLY_DEMO_RESEARCH"] {
             host.demoResearch(question, out: ProcessInfo.processInfo.environment["GOOGLY_DEMO_OUT"] ?? "/tmp/googly-report")
         }
+        #endif
         server.onPhonesChanged = { [weak self] names in
             self?.refreshIcon()
             if names.isEmpty, self?.host.awake == true { self?.host.setAwake(false) }
@@ -152,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func dock() { overlay.goHome() }
 
+    #if DEBUG
     /// For checking the speech bubble's look: GOOGLY_DEMO_BUBBLE=top|middle|home shows a sample reply.
     private func showDemoBubbleIfAsked() {
         guard let where_ = ProcessInfo.processInfo.environment["GOOGLY_DEMO_BUBBLE"],
@@ -189,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
+    #endif
     @objc private func toggleShow() { settings.showCursor.toggle() }
     @objc private func toggleGlow() { settings.glow.toggle() }
     @objc private func setTrail(_ item: NSMenuItem) {
@@ -205,7 +211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// On launch, asks for whatever he still needs (so Bluey shows up in those Settings lists),
     /// and keeps a small status file so it's easy to check what's allowed.
     private func checkPermissions() {
-        guard ProcessInfo.processInfo.environment["GOOGLY_DEMO_OUT"] == nil else { return }
         if settings.computerControl && !ComputerControl.isTrusted { ComputerControl.askForPermission() }
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         let status = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -270,8 +275,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 alert.addButton(withTitle: "Later")
                 if alert.runModal() == .alertFirstButtonReturn {
                     // App sits at <repo>/build/Bluey.app; the updater is <repo>/scripts/update.sh.
-                    let script = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-                        .appendingPathComponent("scripts/update.sh")
+                    let repo = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+                    let script = repo.appendingPathComponent("scripts/update.sh")
+                    // Only run it from inside a real checkout (not, say, ~/Downloads/Bluey.app → ~/scripts).
+                    guard FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git").path),
+                          FileManager.default.fileExists(atPath: script.path) else {
+                        let note = NSAlert()
+                        note.messageText = "Can't update from here"
+                        note.informativeText = "Run Bluey from its project folder's build/ directory to use the updater."
+                        note.runModal()
+                        return
+                    }
                     if let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") {
                         try? await NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: .init())
                     }

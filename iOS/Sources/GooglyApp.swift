@@ -1,4 +1,7 @@
 import SwiftUI
+
+/// Localized String for places that can't use Text's automatic lookup (concatenations, ternaries, toasts).
+func L(_ key: String.LocalizationValue) -> String { String(localized: key) }
 #if canImport(UIKit)
 import UIKit
 #endif

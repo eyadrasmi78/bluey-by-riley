@@ -53,6 +53,32 @@ public enum GooglySecurity {
         return c.count > 5 ? c.prefix(5) + "-" + c.dropFirst(5) : c
     }
 
+    private static func sealKey(_ secret: SharedSecret) -> SymmetricKey {
+        secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data("bluey-seal".utf8), sharedInfo: Data(), outputByteCount: 32)
+    }
+
+    /// Mac side: wraps the link key for the phone's ephemeral public key. Even someone who later cracks the
+    /// pairing code from a recorded handshake can't open this: the private halves never leave the devices.
+    /// Reply format: base64(Mac public key) + "." + base64(sealed key).
+    public static func sealLinkKey(_ linkKey: Data, forPhonePublicKey phonePublic: Data) -> String? {
+        guard let phone = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: phonePublic) else { return nil }
+        let mine = Curve25519.KeyAgreement.PrivateKey()
+        guard let secret = try? mine.sharedSecretFromKeyAgreement(with: phone),
+              let box = try? ChaChaPoly.seal(linkKey, using: sealKey(secret)) else { return nil }
+        return mine.publicKey.rawRepresentation.base64EncodedString() + "." + box.combined.base64EncodedString()
+    }
+
+    /// Phone side: opens the Mac's reply with the phone's ephemeral private key.
+    public static func openLinkKey(_ reply: String, with mine: Curve25519.KeyAgreement.PrivateKey) -> Data? {
+        let parts = reply.split(separator: ".").map(String.init)
+        guard parts.count == 2, let macPublic = Data(base64Encoded: parts[0]), let sealed = Data(base64Encoded: parts[1]),
+              let mac = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macPublic),
+              let secret = try? mine.sharedSecretFromKeyAgreement(with: mac),
+              let box = try? ChaChaPoly.SealedBox(combined: sealed),
+              let key = try? ChaChaPoly.open(box, using: sealKey(secret)) else { return nil }
+        return key
+    }
+
     /// Derives the pairing PSK from the pairing code into the PSK used only during pairing.
     public static func key(fromPairingCode code: String) -> Data {
         let normalized = normalizePairingCode(code)

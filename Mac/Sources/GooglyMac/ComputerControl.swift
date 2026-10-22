@@ -98,7 +98,10 @@ enum ComputerControl {
     // MARK: Keyboard
 
     /// Types text as if on a keyboard, calling `onChunk` as each bit goes in (for the typing animation).
-    static func type(_ text: String, onChunk: (String) -> Void) async {
+    /// `stillSafe` is asked after every Tab or Return (the keys that move focus); if it says no, typing stops.
+    /// Returns false when it stopped early.
+    @discardableResult
+    static func type(_ text: String, stillSafe: () -> Bool = { true }, onChunk: (String) -> Void) async -> Bool {
         // Short text types at a natural pace; long text goes in faster, a few characters at a time.
         let chunkSize = text.count > 160 ? 6 : 1
         let pause: Duration = text.count > 160 ? .milliseconds(12) : .milliseconds(22)
@@ -113,6 +116,7 @@ enum ComputerControl {
                 }
                 pressKey(code: character == "\t" ? kVK_Tab : kVK_Return, flags: [])
                 try? await Task.sleep(for: pause)
+                if !stillSafe() { return false }
                 continue
             }
             chunk.append(character)
@@ -127,6 +131,7 @@ enum ComputerControl {
             typeUnicode(chunk)
             onChunk(chunk)
         }
+        return true
     }
 
     private static func typeUnicode(_ text: String) {
@@ -153,6 +158,40 @@ enum ComputerControl {
     /// Returns a short label for it, like "⌘T".
     @discardableResult
     static func press(_ combo: String) throws -> String {
+        let parsed = try parse(combo)
+        pressKey(code: parsed.code, flags: parsed.flags)
+        return parsed.label
+    }
+
+    /// Shortcuts that log out, lock the screen, quit apps or empty the Trash are left to the user.
+    /// Compared as parsed (modifiers, key), so "shift+cmd+q", "⌘⇧Q" and "meta+shift+q" all match.
+    private static let refusedCombos: [(flags: CGEventFlags, code: Int)] = [
+        ([.maskCommand, .maskShift], kVK_ANSI_Q), ([.maskCommand, .maskShift, .maskAlternate], kVK_ANSI_Q),
+        ([.maskControl, .maskCommand], kVK_ANSI_Q), ([.maskCommand], kVK_ANSI_Q),
+        ([.maskCommand, .maskAlternate], kVK_Escape),
+        ([.maskCommand, .maskShift], kVK_Delete), ([.maskCommand, .maskShift, .maskAlternate], kVK_Delete),
+    ]
+
+    static func isRefused(_ combo: String) -> Bool {
+        guard let parsed = try? parse(combo) else { return false }
+        let mask: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+        let flags = parsed.flags.intersection(mask)
+        return refusedCombos.contains { $0.code == parsed.code && $0.flags == flags }
+    }
+
+    /// True for Return/Enter (so it can be refused in a terminal).
+    static func isReturn(_ combo: String) -> Bool {
+        (try? parse(combo))?.code == kVK_Return
+    }
+
+    /// Terminals run whatever is typed, so typing into one is left to the user.
+    static var frontmostIsTerminal: Bool {
+        let terminals: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty",
+                                      "net.kovidgoyal.kitty", "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper"]
+        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier.map(terminals.contains) ?? false
+    }
+
+    private static func parse(_ combo: String) throws -> (flags: CGEventFlags, code: Int, label: String) {
         var flags: CGEventFlags = []
         var label = ""
         var keyCode: Int?
@@ -181,8 +220,7 @@ enum ComputerControl {
             }
         }
         guard let keyCode else { throw ControlError.unknownKey(combo) }
-        pressKey(code: keyCode, flags: flags)
-        return label + keyLabel
+        return (flags, keyCode, label + keyLabel)
     }
 
     private static let keyCodes: [String: Int] = {
@@ -218,9 +256,15 @@ enum ComputerControl {
     // MARK: Apps and links
 
     /// Opens (or brings forward) an app by name, like "Safari" or "notes".
+    /// Apps that can run commands, read passwords or change system settings are opened by the user, not him.
+    private static let blockedApps: Set<String> = ["terminal", "iterm", "iterm2", "ghostty", "warp", "kitty", "alacritty", "wezterm",
+                                                   "hyper", "script editor", "automator", "shortcuts", "keychain access",
+                                                   "system settings", "system preferences", "passwords"]
+
     static func openApp(_ name: String) async -> String {
         let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             .replacingOccurrences(of: ".app", with: "")
+        if blockedApps.contains(wanted) { return "I don't open \(name) (it can run commands or change settings). Ask the user to open it." }
         if let running = NSWorkspace.shared.runningApplications.first(where: {
             $0.activationPolicy == .regular && $0.localizedName?.lowercased() == wanted
         }) {
@@ -228,6 +272,9 @@ enum ComputerControl {
             return "Switched to \(running.localizedName ?? name)."
         }
         guard let url = findApp(wanted) else { return "I couldn't find an app called \(name)." }
+        if blockedApps.contains(url.deletingPathExtension().lastPathComponent.lowercased()) {
+            return "I don't open \(url.deletingPathExtension().lastPathComponent) (it can run commands or change settings). Ask the user to open it."
+        }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         do {
@@ -254,6 +301,16 @@ enum ComputerControl {
             ?? apps.first { name($0).contains(wanted) }
     }
 
+    /// Loopback, link-local and private-network hosts: a GET to one can trigger local dev servers or devices.
+    private static func isLocalHost(_ host: String) -> Bool {
+        let h = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if h == "localhost" || h.hasSuffix(".localhost") || h.hasSuffix(".local") || h.hasSuffix(".internal") || h == "::1" { return true }
+        if h.hasPrefix("fe80:") || h.hasPrefix("fc") || h.hasPrefix("fd") { return h.contains(":") }
+        let p = h.split(separator: ".").compactMap { Int($0) }
+        guard p.count == 4 else { return false }
+        return p[0] == 127 || p[0] == 10 || p[0] == 0 || (p[0] == 169 && p[1] == 254) || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16...31).contains(p[1]))
+    }
+
     /// Opens a website or link in the default browser.
     static func openURL(_ text: String) -> String {
         var address = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -261,6 +318,7 @@ enum ComputerControl {
         guard let url = URL(string: address), let host = url.host, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else {
             return "That doesn't look like a web address."
         }
+        if isLocalHost(host) { return "I only open public websites, not addresses on this computer or network." }
         NSWorkspace.shared.open(url)
         return "Opened \(host)."
     }

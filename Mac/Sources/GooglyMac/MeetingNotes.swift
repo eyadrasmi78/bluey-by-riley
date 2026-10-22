@@ -27,8 +27,9 @@ enum MeetingNotes {
         writeReadmeIfNeeded()
         let tag = String(session.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(8)).lowercased()  // phone-supplied: no path characters
         guard !tag.isEmpty else { return root.appendingPathComponent("unknown", isDirectory: true) }
-        if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil))?
-            .first(where: { $0.lastPathComponent.hasSuffix(tag) }) {
+        // Match whole folders ending in " <tag>" only, so a short or odd id can't land in another session's folder.
+        if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]))?
+            .first(where: { $0.lastPathComponent.hasSuffix(" " + tag) && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) {
             return existing
         }
         let name = DateFormatter.folderName.string(from: started) + " " + tag

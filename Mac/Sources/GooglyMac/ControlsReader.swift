@@ -90,6 +90,7 @@ enum ControlsReader {
 
     private static func describe(_ element: AXUIElement, kind: String) -> String {
         var parts: [String] = []
+        let secure = (attribute(element, kAXSubroleAttribute) as String?) == "AXSecureTextField"
         for key in [kAXTitleAttribute, kAXDescriptionAttribute, "AXPlaceholderValue", kAXHelpAttribute] {
             if let text: String = attribute(element, key) {
                 let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -97,6 +98,7 @@ enum ControlsReader {
             }
             if !parts.isEmpty { break }
         }
+        if secure { return parts.joined(separator: ", ").replacingOccurrences(of: "\n", with: " ") }  // never read a password
         if fieldKinds.contains(kind), let value: String = attribute(element, kAXValueAttribute) {
             let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !clean.isEmpty { parts.append("contains: \(clean.prefix(40))") }
