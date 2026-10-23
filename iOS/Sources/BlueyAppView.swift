@@ -19,7 +19,7 @@ struct BlueyAppView: View {
             }
             .background(Color.black)
             .navigationDestination(for: UUID.self) { id in
-                SessionDetailView(store: store, id: id)
+                SessionDetailView(store: store, link: link, id: id)
             }
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -229,6 +229,7 @@ private struct SessionRow: View {
 /// One session as a chat: what you said in grey, your questions in blue, his replies in white bubbles.
 struct SessionDetailView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var link: MacLink
     let id: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
@@ -264,6 +265,17 @@ struct SessionDetailView: View {
     }
 
     private var session: BlueySession? { store.sessions.first { $0.id == id } }
+
+    /// Asks the Mac for this session's summary and action items (it writes them once the session is over).
+    private func fetchDigest() {
+        guard let session, session.ended != nil, link.connected else { return }
+        link.request(Packet(command: "digest", text: id.uuidString)) { reply in
+            guard let text = reply?.text,
+                  let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  let summary = json["summary"] as? String, !summary.isEmpty else { return }
+            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [])
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -325,6 +337,9 @@ struct SessionDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
+                        if let digest = session?.digest, !digest.isEmpty {
+                            DigestCard(summary: digest, actions: session?.actionItems ?? [])
+                        }
                         ForEach(session?.displayEntries ?? []) { entry in
                             EntryView(entry: entry).id(entry.id)
                         }
@@ -332,7 +347,11 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 22)
                     .padding(.bottom, 24)
                 }
-                .onAppear { if let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+                .onAppear {
+                    fetchDigest()
+                    if let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+                .onChange(of: link.connected) { _, _ in fetchDigest() }
                 .onChange(of: session?.entries.count) { _, _ in
                     if let last = session?.entries.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
@@ -347,6 +366,46 @@ struct SessionDetailView: View {
         } message: {
             Text("Shows here and becomes the title of the Mac's notes file.")
         }
+    }
+}
+
+/// The Mac's short summary and action items for a finished session, shown above the transcript.
+private struct DigestCard: View {
+    let summary: String
+    let actions: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Summary")
+                .font(.fredoka(16))
+                .foregroundStyle(Color(hex: Palette.berry2))
+            Text((try? AttributedString(markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                 ?? AttributedString(summary))
+                .font(.plexSans(14))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            if !actions.isEmpty {
+                Text("Action items")
+                    .font(.fredoka(16))
+                    .foregroundStyle(Color(hex: Palette.berry2))
+                    .padding(.top, 4)
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: Palette.inkSoft))
+                            .padding(.top, 3)
+                        Text(item)
+                            .font(.plexSans(14))
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hex: Palette.panel).opacity(0.9), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

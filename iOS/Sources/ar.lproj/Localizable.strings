@@ -40,3 +40,5 @@
 "“Hey Bluey” needs Speech Recognition: Settings → Privacy → Speech." = "«هلا بلوي» يحتاج إلى التعرف على الكلام: الإعدادات ← الخصوصية ← الكلام.";
 "Couldn't start the wake listener: %@" = "تعذّر تشغيل مستمع التنبيه: %@";
 "%@ · %lld asked" = "%@ · %lld سؤال";
+"Summary" = "الملخص";
+"Action items" = "بنود العمل";

@@ -24,6 +24,24 @@ extension MeetingNotes {
         return name.isEmpty || name == "Bluey session" ? stamp : "\(name) — \(stamp)"
     }
 
+    // MARK: Digest for the phone
+
+    /// The session's existing folder (never creates one), matched the same careful way as `folder(session:started:)`.
+    static func existingFolder(session: String) -> URL? {
+        let tag = String(session.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(8)).lowercased()
+        guard !tag.isEmpty else { return nil }
+        return sessionFolders().first { $0.lastPathComponent.hasSuffix(" " + tag) }
+    }
+
+    /// What the phone shows for a session: the summary text and its action items ("" and [] until the summary exists).
+    static func digest(session: String) -> [String: Any] {
+        guard let folder = existingFolder(session: session),
+              let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8) else {
+            return ["summary": "", "actions": [String]()]
+        }
+        return ["summary": summary, "actions": actionItems(in: summary)]
+    }
+
     // MARK: Search
 
     struct Hit {

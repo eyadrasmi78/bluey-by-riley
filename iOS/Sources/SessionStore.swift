@@ -33,6 +33,9 @@ struct BlueySession: Codable, Identifiable, Equatable {
     /// Where the Mac saved this session's meeting notes.
     var notesPath: String?
     var pending: [PendingChunk]?
+    /// The Mac's summary of this session (markdown) and its action items, fetched when you open the session.
+    var digest: String?
+    var actionItems: [String]?
 
     var questionCount: Int { entries.filter { $0.kind == .asked }.count }
 
@@ -178,6 +181,13 @@ final class SessionStore: ObservableObject {
             }
             s.entries.sort { $0.time < $1.time }
         }
+    }
+
+    func setDigest(_ session: UUID, summary: String, actions: [String]) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
+        sessions[i].digest = summary
+        sessions[i].actionItems = actions
+        scheduleSave(sync: false)
     }
 
     func setNotesPath(_ session: UUID, _ path: String) {

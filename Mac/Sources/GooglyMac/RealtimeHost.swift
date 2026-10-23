@@ -70,6 +70,11 @@ final class RealtimeHost {
                 return
             }
             reply(Packet(command: "notes", callID: packet.callID, text: folder.path))
+        case "digest":
+            // The phone asks for a session's summary and action items (it shows them in the session screen).
+            let body = MeetingNotes.digest(session: packet.text ?? "")
+            let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) }
+            reply(Packet(command: "digest", callID: packet.callID, text: text))
         case "awake":
             setAwake(true)
         case "asleep":
