@@ -52,7 +52,11 @@ enum Keychain {
         var url = fileURL
         let temp = url.deletingLastPathComponent().appendingPathComponent("keys.json.tmp")
         guard FileManager.default.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
-        _ = try? FileManager.default.replaceItemAt(url, withItemAt: temp)  // atomic swap
+        if FileManager.default.fileExists(atPath: url.path) {
+            _ = try? FileManager.default.replaceItemAt(url, withItemAt: temp)  // atomic swap of an existing file
+        } else {
+            try? FileManager.default.moveItem(at: temp, to: url)  // first run: nothing to replace yet
+        }
         var values = URLResourceValues()
         values.isExcludedFromBackup = true  // keys shouldn't ride along in Time Machine
         try? url.setResourceValues(values)

@@ -42,3 +42,4 @@
 "%@ · %lld asked" = "%@ · %lld سؤال";
 "Summary" = "الملخص";
 "Action items" = "بنود العمل";
+"Wake listening needs on-device speech recognition, which isn't available for this language on this phone." = "يحتاج الاستماع للتنبيه إلى التعرف على الكلام على الجهاز نفسه، وهذا غير متاح لهذه اللغة على هذا الهاتف.";

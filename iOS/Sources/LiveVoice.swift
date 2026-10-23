@@ -128,7 +128,6 @@ final class LiveVoice: NSObject, ObservableObject {
         reconnecting = false
         recorder.finish()
         if wasRunning { onSessionEnd?() }
-        sleepDone()
         askedItems = []
         awaitingQuestion = false
         socket?.cancel(with: .normalClosure, reason: nil)
@@ -143,6 +142,7 @@ final class LiveVoice: NSObject, ObservableObject {
         toolsRunning = 0
         level = 0
         setState(.asleep)
+        sleepDone()  // after the socket is gone, or startWakePhrase() would refuse to arm
     }
 
     /// Says a quick hi (for checking the chirp volume).
@@ -464,6 +464,7 @@ final class LiveVoice: NSObject, ObservableObject {
             guard let self, self.wakeListening, !self.wantAwake else { return }
             LiveVoice.wakeLog("auto-pause after \(minutes) quiet minutes")
             self.wakeListening = false
+            self.armingInFlight = false  // so opening the app can arm the listener again
             self.wakePaused = true
             self.stopWakeRecognition()
             self.complain(L("Wake listening paused after \(minutes) quiet minutes — open the app to resume."))
@@ -531,8 +532,17 @@ final class LiveVoice: NSObject, ObservableObject {
         request.shouldReportPartialResults = true
         request.contextualStrings = wakeLanguage == "ar" ? ["هلا بلوي", "يا بلوي", "بلوي", "بلوبيري"]
                                                          : ["Hey Bluey", "Bluey", "blueberry", "wake up"]
-        if wakeRecognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
-        Self.wakeLog("on-device = \(wakeRecognizer?.supportsOnDeviceRecognition == true)")
+        // The wake listener is promised to stay on the phone: if this language can't be recognized on-device here,
+        // say so instead of quietly sending ambient audio to Apple's servers.
+        guard wakeRecognizer?.supportsOnDeviceRecognition == true else {
+            Self.wakeLog("on-device recognition unavailable for \(wakeLanguage)")
+            wakeListening = false
+            armingInFlight = false
+            complain(L("Wake listening needs on-device speech recognition, which isn't available for this language on this phone."))
+            return
+        }
+        request.requiresOnDeviceRecognition = true
+        Self.wakeLog("on-device = true")
         armAutoOff()
         wakeRequest = request
         wakeTask = wakeRecognizer?.recognitionTask(with: request) { [weak self] result, error in

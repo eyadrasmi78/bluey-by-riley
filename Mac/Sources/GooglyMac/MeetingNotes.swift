@@ -152,11 +152,11 @@ enum MeetingNotes {
         let lines = (json["entries"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
         let transcript = lines.joined(separator: "\n")
         guard transcript.count > 400 else { return }
-        var done = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
-        guard !done.contains(id) else { return }
-        done.append(id)
-        UserDefaults.standard.set(done, forKey: "summarizedSessions")
-        Task {
+        let done = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
+        guard !done.contains(id), !summarizing.contains(id) else { return }
+        summarizing.insert(id)  // one attempt at a time; it's only recorded as done once the files are written
+        Task { @MainActor in
+            defer { summarizing.remove(id) }
             guard let key = Keychain.get(.openai) else { return }
             do {
                 let summary = try await summarize(transcript: transcript,
@@ -164,6 +164,9 @@ enum MeetingNotes {
                                                   name: json["name"] as? String, key: key)
                 guard !summary.isEmpty else { return }
                 try? summary.write(to: folder.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+                var finished = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
+                finished.append(id)
+                UserDefaults.standard.set(finished, forKey: "summarizedSessions")
                 writeActionItems(summary: summary, folder: folder)
                 let notesURL = folder.appendingPathComponent("notes.md")
                 if let notes = try? String(contentsOf: notesURL, encoding: .utf8), !notes.contains("## Summary") {
@@ -174,6 +177,9 @@ enum MeetingNotes {
             }
         }
     }
+
+    // Touched only on the main thread (notes arrive there); marked so strict concurrency checking accepts it.
+    nonisolated(unsafe) private static var summarizing: Set<String> = []
 
     private static func summarize(transcript: String, started: Date, name: String?, key: String) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)

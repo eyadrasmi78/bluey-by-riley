@@ -265,6 +265,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func scheduleSave(sync: Bool = false) {
+        if sync { scheduleSync() }  // e.g. a rename: push the new title to the Mac's notes too
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.save() }
         saveWork = work

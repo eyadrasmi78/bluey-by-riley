@@ -87,10 +87,15 @@ enum ScreenReader {
 
     /// The NSScreen matching this SCDisplay (same Quartz size+position).
     private static func screen(for display: SCDisplay) -> NSScreen? {
-        let target = CGRect(x: 0, y: 0, width: display.width, height: display.height)
+        // The display ID is exact; the rectangle (size and both global coordinates) is the fallback.
+        if let byID = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.displayID
+        }) { return byID }
         return NSScreen.screens.first { screen in
-            quartzRect(screen.frame).size == target.size &&
-            abs(quartzRect(screen.frame).minX - CGFloat(display.frame.minX)) < 2
+            let rect = quartzRect(screen.frame)
+            return rect.size == CGSize(width: display.width, height: display.height)
+                && abs(rect.minX - CGFloat(display.frame.minX)) < 2
+                && abs(rect.minY - CGFloat(display.frame.minY)) < 2
         } ?? NSScreen.screens.first
     }
 
