@@ -5,6 +5,8 @@ import Foundation
 enum Keychain {
     enum Key: String {
         case anthropic, elevenlabs, openai
+        /// Base64 of the long-term TLS link key phones use to prove themselves (see GooglySecurity).
+        case linkKey
     }
 
     private static var cache: [String: String]?
@@ -17,10 +19,21 @@ enum Keychain {
         return dir.appendingPathComponent("keys.json")
     }
 
+    /// Set when keys.json exists but can't be parsed: we then refuse to overwrite it, so a glitch can
+    /// never silently drop the OpenAI key or unpair every phone.
+    private static var unreadable = false
+
     private static func load() -> [String: String] {
         if let cache { return cache }
-        let stored = (try? Data(contentsOf: fileURL))
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
+        var stored: [String: String] = [:]
+        if let data = try? Data(contentsOf: fileURL) {
+            if let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] {
+                stored = parsed
+            } else {
+                unreadable = true
+                NSLog("Googly: keys.json is unreadable; leaving it untouched")
+            }
+        }
         cache = stored
         return stored
     }
@@ -34,7 +47,18 @@ enum Keychain {
         var all = load()
         all[key.rawValue] = value?.isEmpty == false ? value : nil
         cache = all
-        guard let data = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) else { return }
-        FileManager.default.createFile(atPath: fileURL.path, contents: data, attributes: [.posixPermissions: 0o600])
+        guard !unreadable,
+              let data = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .sortedKeys]) else { return }
+        var url = fileURL
+        let temp = url.deletingLastPathComponent().appendingPathComponent("keys.json.tmp")
+        guard FileManager.default.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
+        if FileManager.default.fileExists(atPath: url.path) {
+            _ = try? FileManager.default.replaceItemAt(url, withItemAt: temp)  // atomic swap of an existing file
+        } else {
+            try? FileManager.default.moveItem(at: temp, to: url)  // first run: nothing to replace yet
+        }
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true  // keys shouldn't ride along in Time Machine
+        try? url.setResourceValues(values)
     }
 }

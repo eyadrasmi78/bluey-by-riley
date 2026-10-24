@@ -70,6 +70,17 @@ final class RealtimeHost {
                 return
             }
             reply(Packet(command: "notes", callID: packet.callID, text: folder.path))
+        case "digest":
+            // The phone asks for a session's summary and action items (it shows them in the session screen).
+            let body = MeetingNotes.digest(session: packet.text ?? "")
+            let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) }
+            reply(Packet(command: "digest", callID: packet.callID, text: text))
+        case "actionsDone":
+            // The phone ticked items off: {"session": id, "done": [item, …]} — mirror it in the notes files.
+            guard let json = packet.text.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+                  let session = json["session"] as? String else { return }
+            let saved = MeetingNotes.setActionItemsDone(session: session, done: json["done"] as? [String] ?? [])
+            if packet.callID != nil { reply(Packet(command: "actionsDone", callID: packet.callID, text: saved ? "ok" : nil)) }
         case "awake":
             setAwake(true)
         case "asleep":
@@ -105,6 +116,7 @@ final class RealtimeHost {
         }
     }
 
+    #if DEBUG
     /// GOOGLY_DEMO_RESEARCH="question": runs a real research call and saves pictures of the card.
     func demoResearch(_ question: String, out: String) {
         Task { @MainActor in
@@ -127,6 +139,7 @@ final class RealtimeHost {
             exit(0)
         }
     }
+    #endif
 
     func setAwake(_ on: Bool) {
         awake = on
@@ -137,7 +150,7 @@ final class RealtimeHost {
             queue = []
             stopChoreography()
             overlay.goHome()
-            overlay.view.speechTarget = nil
+            overlay.speechTargetGlobal = nil
             showCaption(nil, for: 0)
         }
         onChange?()
@@ -179,6 +192,8 @@ final class RealtimeHost {
                  "Look something up on the web and put a short report (title plus up to four paragraphs, with sources) on the user's screen. Use for anything you're not sure of, anything recent, or anything that needs facts, prices, news or details. Before calling it, point at the relevant thing if there is one and reply with one short line that ends with \"doing some research…\".",
                  ["question": ["type": "string", "description": "What to research, as a clear, self-contained question."]],
                  required: ["question"]),
+            tool("open_action_items",
+                 "List the user's open (not yet ticked off) action items from their meeting notes, newest meeting first. Use when they ask what's still open, what they need to do, or about their to-dos or action items."),
             tool("stop_pointing", "Bring your cursor back home when you're done pointing."),
             tool("go_to_sleep",
                  "Go back to quietly following the user's mouse with your eyes. Use when the user says bye, thanks that's all, or asks you to sleep."),
@@ -226,17 +241,35 @@ final class RealtimeHost {
     private func runTool(_ name: String, arguments: String) async -> (text: String, image: String?) {
         let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any]) ?? [:]
         if Self.actionNames.contains(name) {
-            if let refusal = actionRefusal() { return (refusal, nil) }
-            return await runAction(name, args)
+            let detail = actionDetail(name, args)
+            if let refusal = actionRefusal() {
+                ActionLog.record(name, detail, outcome: "refused: \(refusal)")
+                return (refusal, nil)
+            }
+            if Settings.shared.askBeforeRisky, let risk = riskDescription(name, args) {
+                let allowed = await ActionRisk.approve(risk.title, detail: risk.detail)
+                if !allowed {
+                    ActionLog.record(name, detail, outcome: "declined by the user")
+                    return ("The user declined this on the Mac. Don't retry it; ask what they'd like instead.", nil)
+                }
+            }
+            let result = await runAction(name, args)
+            ActionLog.record(name, detail, outcome: result.text)
+            return result
         }
         switch name {
         case "look_at_screen":
             return await look(prefix: nil)
+        case "open_action_items":
+            return (MeetingNotes.openActionItemsText(), nil)
         case "point_at":
             let id = (args["target_id"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             guard let snapshot else { return ("Call look_at_screen first.", nil) }
             guard let target = snapshot.target(id) else { return ("No target \(id). Use an id from the last look_at_screen.", nil) }
-            point(to: CGPoint(x: target.rect.midX, y: target.rect.maxY + 3), showing: target.rect)
+            let origin = snapshot.origin
+            point(to: CGPoint(x: origin.x + target.rect.midX, y: origin.y + target.rect.maxY + 3),
+                  showing: CGRect(x: origin.x + target.rect.minX, y: origin.y + target.rect.minY,
+                                  width: target.rect.width, height: target.rect.height))
             return (queue.count > 1 ? "Queued: your cursor will point at \"\(target.text)\" after the earlier spots." : "Pointing at \"\(target.text)\".", nil)
         case "point_at_spot":
             guard let x = number(args["x"]), let y = number(args["y"]) else { return ("Give x and y.", nil) }
@@ -272,9 +305,11 @@ final class RealtimeHost {
             let shot = try await ScreenReader.snapshot()
             snapshot = shot
             var text = shot.targetList
-            let mouse = ComputerControl.mouseLocation
+            let global = ComputerControl.mouseLocation
+            let mouse = CGPoint(x: global.x - shot.origin.x, y: global.y - shot.origin.y)  // into captured-display space
             let mx = Int(min(max(mouse.x / shot.size.width, 0), 1) * 1000), my = Int(min(max(mouse.y / shot.size.height, 0), 1) * 1000)
             text += "\nThe user's mouse pointer is at @\(mx),\(my)"
+            if shot.origin != .zero { text += " (on a secondary display; the image is that display)" }
             if let under = shot.target(near: mouse) { text += ", on \(under.id) \"\(under.text)\"" }
             text += ". When they say \"this\", \"that\" or \"here\", they mean what's at their mouse pointer."
             if let prefix { text = prefix + "\nHere's the screen now (ids have changed):\n" + text }
@@ -285,6 +320,49 @@ final class RealtimeHost {
         } catch {
             let problem = "I can't see the screen. Screen Recording permission is off for Bluey on the Mac."
             return (prefix.map { $0 + " " + problem } ?? problem, nil)
+        }
+    }
+
+    /// A short description of an action for the log: what was clicked, typed at, opened.
+    private func actionDetail(_ name: String, _ args: [String: Any]) -> String {
+        switch name {
+        case "click":
+            let id = (args["target_id"] as? String).map { snapshot?.target($0)?.text ?? $0 }
+            let point = number(args["x"]).flatMap { x in number(args["y"]).map { y in "@\(Int(x)),\(Int(y))" } }
+            return id ?? point ?? "?"
+        case "type_text":
+            return "\((args["text"] as? String ?? "").count) characters"  // never log what was typed
+        case "press_keys": return args["keys"] as? String ?? "?"
+        case "scroll": return "\(args["direction"] as? String ?? "down")"
+        case "drag": return "drag"
+        case "open_app": return args["name"] as? String ?? "?"
+        case "open_url": return args["url"] as? String ?? "?"
+        default: return ""
+        }
+    }
+
+    /// What to show in the approval popup for a risky action (nil when it doesn't need asking).
+    private func riskDescription(_ name: String, _ args: [String: Any]) -> (title: String, detail: String)? {
+        switch name {
+        case "click":
+            guard let target = spot(args, id: "target_id", x: "x", y: "y") else { return nil }
+            var label = target.name
+            if label == "that spot", let snapshot {  // clicked by position: judge by what's under it
+                let local = CGPoint(x: target.point.x - snapshot.origin.x, y: target.point.y - snapshot.origin.y)
+                label = snapshot.target(near: local)?.text ?? ""
+            }
+            guard ActionRisk.clickRisk(label) != nil else { return nil }
+            return (String(format: T("Click “%@”"), label), T("This looks like it sends, deletes, buys, posts or grants something."))
+        case "type_text":
+            let text = args["text"] as? String ?? ""
+            guard ActionRisk.typeRisk(text: text, pressReturn: args["press_return"] as? Bool ?? false) else { return nil }
+            return (T("Type text and press Return"), "“\(text.prefix(200))\(text.count > 200 ? "…" : "")”")
+        case "press_keys":
+            let keys = args["keys"] as? String ?? ""
+            guard ActionRisk.keysRisk(keys) else { return nil }
+            return (String(format: T("Press %@"), keys), T("This can submit, delete or close something."))
+        default:
+            return nil
         }
     }
 
@@ -300,13 +378,16 @@ final class RealtimeHost {
     }
 
     private func gridPoint(_ x: Double, _ y: Double) -> CGPoint {
-        CGPoint(x: min(max(x, 0), 1000) / 1000 * screenSize.width, y: min(max(y, 0), 1000) / 1000 * screenSize.height)
+        let origin = snapshot?.origin ?? .zero
+        return CGPoint(x: origin.x + min(max(x, 0), 1000) / 1000 * screenSize.width,
+                       y: origin.y + min(max(y, 0), 1000) / 1000 * screenSize.height)
     }
 
     /// Finds the spot an action refers to: a target id (its center) or a grid position.
+    /// Targets are captured-display-local; clicks work in Quartz-global space.
     private func spot(_ args: [String: Any], id idKey: String, x xKey: String, y yKey: String) -> (point: CGPoint, name: String)? {
-        if let id = args[idKey] as? String, !id.isEmpty, let target = snapshot?.target(id) {
-            return (CGPoint(x: target.rect.midX, y: target.rect.midY), target.text)
+        if let id = args[idKey] as? String, !id.isEmpty, let snapshot, let target = snapshot.target(id) {
+            return (CGPoint(x: snapshot.origin.x + target.rect.midX, y: snapshot.origin.y + target.rect.midY), target.text)
         }
         if let x = number(args[xKey]), let y = number(args[yKey]) {
             return (gridPoint(x, y), "that spot")
@@ -330,9 +411,6 @@ final class RealtimeHost {
         return nil
     }
 
-    /// Shortcuts that log out, lock the screen or force-quit apps are left to the user.
-    private static let refusedShortcuts: Set<String> = ["cmd+shift+q", "cmd+option+shift+q", "ctrl+cmd+q", "cmd+option+escape", "cmd+option+esc"]
-
     private func runAction(_ name: String, _ args: [String: Any]) async -> (text: String, image: String?) {
         takeControl()
         defer { afterAction() }
@@ -346,7 +424,7 @@ final class RealtimeHost {
             let count = (args["double"] as? Bool ?? false) ? 2 : 1
             let saved = ComputerControl.mouseLocation
             await fly(to: target.point)
-            view.clickEffect(at: target.point, right: right)
+            overlay.clickEffect(at: target.point, right: right)
             try? await Task.sleep(for: .milliseconds(90))  // the click lands at the bottom of the squish
             await ComputerControl.click(at: target.point, right: right, count: count)
             try? await Task.sleep(for: .milliseconds(60))
@@ -358,17 +436,25 @@ final class RealtimeHost {
         case "type_text":
             let text = args["text"] as? String ?? ""
             guard !text.isEmpty else { return ("Nothing to type.", nil) }
+            if ComputerControl.frontmostIsTerminal {
+                return ("That's a terminal. Ask the user to type there themselves.", nil)
+            }
             let field = ControlsReader.focusedField()
             if field.secure {
                 return ("That's a password field. Ask the user to type it themselves.", nil)
             }
-            if let frame = field.frame, CGRect(origin: .zero, size: screenSize).intersects(frame), frame.height < screenSize.height * 0.6 {
+            // Field frames come back Quartz-global; the captured display's global rect is (origin, size).
+            let captured = CGRect(origin: snapshot?.origin ?? .zero, size: screenSize)
+            if let frame = field.frame, captured.intersects(frame), frame.height < screenSize.height * 0.6 {
                 await fly(to: CGPoint(x: frame.minX + min(28, frame.width * 0.2), y: frame.maxY + 2))
             } else if engine.isHome {
                 overlay.mode = .docked
             }
-            await ComputerControl.type(text) { chunk in view.typedEffect(chunk) }
+            // Tab or Return can move the cursor into a password field mid-text: check again after each one.
+            let typedAll = await ComputerControl.type(text, stillSafe: { !ControlsReader.focusedField().secure && !ComputerControl.frontmostIsTerminal }) { chunk in view.typedEffect(chunk) }
+            if !typedAll { return ("I stopped: the cursor moved into a password field (or a terminal). Ask the user to take over.", nil) }
             if args["press_return"] as? Bool ?? false {
+                if ControlsReader.focusedField().secure { return ("Typed it, but I won't press Return in a password field.", nil) }
                 try? await Task.sleep(for: .milliseconds(120))
                 _ = try? ComputerControl.press("return")
                 view.bubble("↩")
@@ -379,10 +465,11 @@ final class RealtimeHost {
 
         case "press_keys":
             let keys = (args["keys"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            let normalized = keys.lowercased().replacingOccurrences(of: " ", with: "")
-                .replacingOccurrences(of: "command", with: "cmd").replacingOccurrences(of: "alt", with: "option")
-            if Self.refusedShortcuts.contains(normalized) {
-                return ("I won't press that one (it logs out, locks or force-quits). Ask the user to do it.", nil)
+            if ComputerControl.isRefused(keys) {
+                return ("I won't press that one (it logs out, locks, quits apps or empties the Trash). Ask the user to do it.", nil)
+            }
+            if ComputerControl.frontmostIsTerminal, ComputerControl.isReturn(keys) {
+                return ("That's a terminal. Ask the user to run commands themselves.", nil)
             }
             if engine.isHome { overlay.mode = .docked }
             do {
@@ -471,7 +558,7 @@ final class RealtimeHost {
         holdUntil = 0
         homeRequested = false
         engine.gazeOverride = nil
-        overlay.view.speechTarget = nil
+        overlay.speechTargetGlobal = nil
     }
 
     private func afterAction() {
@@ -530,7 +617,7 @@ final class RealtimeHost {
         let now = CACurrentMediaTime()
         if now >= holdUntil, !queue.isEmpty {
             let (spot, thing) = queue.removeFirst()
-            overlay.view.speechTarget = thing
+            overlay.speechTargetGlobal = thing
             if !speaking { quietSince = now }  // give him time to start talking about it
             engine.gazeOverride = nil  // his eyes follow the cursor while pointing
             overlay.mode = .pinned(spot)
@@ -550,7 +637,7 @@ final class RealtimeHost {
     private func goHome() {
         overlay.goHome()
         engine.gazeOverride = nil
-        overlay.view.speechTarget = nil
+        overlay.speechTargetGlobal = nil
         homeRequested = false
         stopChoreography()
     }
@@ -615,6 +702,10 @@ final class RealtimeHost {
     happens when the user holds the phone screen to ask you something. Their most recent words are the question; \
     use the earlier talk as context.
 
+    Language: reply in the language of the user's latest question. If they ask in Arabic, answer in natural, \
+    friendly Arabic (plain Gulf-friendly wording, not stiff formal Arabic), still one short line, with no \
+    transliteration. If they ask in English, answer in English. Names and technical terms may stay in English.
+
     Most important rule: when a request needs a tool, call the tool FIRST with no words before it (the one \
     exception is web_research, described below). Never write \
     things like "one moment", "sure", "okay" or "let me". Reply only after, in one short line. No lists, no \
@@ -626,6 +717,10 @@ final class RealtimeHost {
     mouse pointer, which look_at_screen tells you. Point at the most specific thing (a word or number rather than a \
     whole line). For shapes, arrows or charts with no text, use point_at_spot. If the screen may have changed, look \
     again. When the user says goodbye or asks you to sleep, reply with a very short goodbye and call go_to_sleep.
+
+    To-dos: when the user asks what's still open, what they need to do, or about action items, call \
+    open_action_items, then answer in one short line: how many are open and the most pressing one or two. Read the \
+    whole list only if they ask for it.
 
     Research: when answering well needs facts you're not sure of, anything recent, or details from the web, use \
     web_research. In that one response: point at the relevant thing on screen if there is one, write one short \
@@ -667,7 +762,9 @@ final class RealtimeHost {
                     "turn_detection": ["type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300,
                                        "silence_duration_ms": 500, "create_response": false, "interrupt_response": false],
                     "noise_reduction": ["type": "near_field"],
-                    "transcription": ["model": "gpt-4o-mini-transcribe"],
+                    // The prompt keeps short phrases from being heard as another language ("Open TextEdit" once came out Czech).
+                    "transcription": ["model": "gpt-4o-mini-transcribe",
+                                      "prompt": "The speaker talks in English or Arabic (often Gulf Arabic). Transcribe in the language spoken; never in any other language."],
                 ],
             ],
             "tools": tools,

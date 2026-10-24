@@ -15,6 +15,7 @@ targets:
     sources:
       - path: iOS/Sources
       - path: Shared
+      - path: iOS/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.visionairy.googly.phone
@@ -22,8 +23,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: NF73NSV867
-        # Set your team in Xcode (Signing & Capabilities) the first time you run it.
+        DEVELOPMENT_TEAM: 3L93JYP965
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: iOS/Info.plist
       properties:
@@ -37,8 +38,15 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSLocalNetworkUsageDescription: Bluey finds the Mac app on your Wi-Fi so the character can look where it points.
         NSMicrophoneUsageDescription: Talk to your blueberry. He listens while he's awake (double tap him to wake him up or put him to sleep).
+        NSSpeechRecognitionUsageDescription: Lets him hear you say “Hey Bluey” and wake up. Wake-word listening runs on this device; sessions you start are sent to your Mac and OpenAI.
+        CFBundleLocalizations:
+          - en
+          - ar
+        UIBackgroundModes:
+          - audio
         NSBonjourServices:
           - _googly._tcp
+          - _googlypair._tcp
         UIAppFonts:
           - Fredoka.ttf
           - IBMPlexSans.ttf

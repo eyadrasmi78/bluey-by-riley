@@ -1,4 +1,5 @@
 import Foundation
+import GooglyShared
 
 /// Turns recorded audio into a proper transcript (with speaker labels) and keeps each session's
 /// meeting notes as plain files any agent can read: ~/Documents/Bluey Notes/<date> <id>/.
@@ -25,9 +26,11 @@ enum MeetingNotes {
         let fm = FileManager.default
         try? fm.createDirectory(at: root, withIntermediateDirectories: true)
         writeReadmeIfNeeded()
-        let tag = String(session.prefix(8)).lowercased()
-        if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil))?
-            .first(where: { $0.lastPathComponent.hasSuffix(tag) }) {
+        let tag = String(session.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }.prefix(8)).lowercased()  // phone-supplied: no path characters
+        guard !tag.isEmpty else { return root.appendingPathComponent("unknown", isDirectory: true) }
+        // Match whole folders ending in " <tag>" only, so a short or odd id can't land in another session's folder.
+        if let existing = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]))?
+            .first(where: { $0.lastPathComponent.hasSuffix(" " + tag) && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) {
             return existing
         }
         let name = DateFormatter.folderName.string(from: started) + " " + tag
@@ -42,12 +45,14 @@ enum MeetingNotes {
         let text = """
         # Bluey Notes
 
-        Meeting notes recorded by Riley's Bluey app (the blueberry on the iPhone). One folder per listening \
+        Meeting notes recorded by the Bluey app (the blueberry on the iPhone). One folder per listening \
         session, named by start time.
 
         In each session folder:
-        - `notes.md`: the full transcript with timestamps and speaker labels, plus Riley's questions to Bluey, \
-        Bluey's replies and any research reports, in time order. Start here.
+        - `notes.md`: the full transcript with timestamps and speaker labels, plus your questions to Bluey, \
+        Bluey's replies and any research reports, in time order. Start here. A short summary is appended at \
+        the end once the session is finished.
+        - `summary.md`: the same summary on its own.
         - `session.json`: the same data, structured.
         - `audio/`: the raw recording, as five-minute AAC chunks.
 
@@ -134,21 +139,97 @@ enum MeetingNotes {
         if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: folder.appendingPathComponent("session.json"), options: .atomic)
         }
-        try? markdown(json, started: started).write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        var notes = markdown(json, started: started)
+        // A later sync rewrites notes.md from the phone's copy; keep the summary that was added after the session ended.
+        if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8), !summary.isEmpty {
+            notes += "\n## Summary\n\n" + summary + "\n"
+        }
+        try? notes.write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        summarizeSoon(json: json, folder: folder)
         return folder
+    }
+
+    /// Once a session has properly ended and nothing is left to transcribe, write a short summary
+    /// (a few bullets + action items) into the folder as summary.md and tagged onto notes.md.
+    /// Runs once per session, and only for transcripts worth summarizing.
+    private static func summarizeSoon(json: [String: Any], folder: URL) {
+        guard let id = json["id"] as? String, json["ended"] is Double else { return }
+        guard (json["transcribing"] as? Int ?? 0) == 0 else { return }  // chunks still landing
+        let lines = (json["entries"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
+        let transcript = lines.joined(separator: "\n")
+        guard transcript.count > 400 else { return }
+        let done = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
+        guard !done.contains(id), !summarizing.contains(id) else { return }
+        summarizing.insert(id)  // one attempt at a time; it's only recorded as done once the files are written
+        Task { @MainActor in
+            defer { summarizing.remove(id) }
+            guard let key = Keychain.get(.openai) else { return }
+            do {
+                let summary = try await summarize(transcript: transcript,
+                                                  started: Date(timeIntervalSince1970: (json["started"] as? Double) ?? 0),
+                                                  name: json["name"] as? String, key: key)
+                guard !summary.isEmpty else { return }
+                try? summary.write(to: folder.appendingPathComponent("summary.md"), atomically: true, encoding: .utf8)
+                var finished = UserDefaults.standard.array(forKey: "summarizedSessions") as? [String] ?? []
+                finished.append(id)
+                UserDefaults.standard.set(finished, forKey: "summarizedSessions")
+                writeActionItems(summary: summary, folder: folder)
+                let notesURL = folder.appendingPathComponent("notes.md")
+                if let notes = try? String(contentsOf: notesURL, encoding: .utf8), !notes.contains("## Summary") {
+                    try? (notes + "\n## Summary\n\n" + summary + "\n").write(to: notesURL, atomically: true, encoding: .utf8)
+                }
+            } catch {
+                NSLog("Googly: summary failed: \(error)")
+            }
+        }
+    }
+
+    // Touched only on the main thread (notes arrive there); marked so strict concurrency checking accepts it.
+    nonisolated(unsafe) private static var summarizing: Set<String> = []
+
+    private static func summarize(transcript: String, started: Date, name: String?, key: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        let title = name.map { " called '\($0)'" } ?? ""
+        let body: [String: Any] = [
+            "model": "gpt-4o-mini",
+            "temperature": 0.3,
+            "messages": [
+                ["role": "system", "content": """
+                Summarize this meeting transcript for its owner. Reply with exactly two short sections:
+                **What happened** (up to 4 bullets, plain sentences) and **Action items** (bullets, or "None").
+                Speaker letters per five-minute chunk may not match across chunks — don't over-trust them.
+                Write the summary in the language the transcript mostly uses (Arabic stays Arabic), keeping the two English section titles.
+                """],
+                ["role": "user", "content": "Meeting\(title), started \(started.formatted()):\n\n\(String(transcript.prefix(28000)))"],
+            ],
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let content = (choices.first?["message"] as? [String: Any])?["content"] as? String else {
+            throw NSError(domain: "Googly", code: 1, userInfo: [NSLocalizedDescriptionKey: "OpenAI didn't answer"])
+        }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func markdown(_ json: [String: Any], started: Date) -> String {
         let ended = (json["ended"] as? Double).map { Date(timeIntervalSince1970: $0) }
         let entries = json["entries"] as? [[String: Any]] ?? []
         let pending = json["transcribing"] as? Int ?? 0
+        let name = json["name"] as? String
         let day = DateFormatter()
         day.dateStyle = .full
         day.timeStyle = .short
         let clock = DateFormatter()
         clock.dateFormat = "h:mm:ss a"
 
-        var out = ["# Bluey session: \(day.string(from: started))", ""]
+        var out = ["# \(name ?? "Bluey session"): \(day.string(from: started))", ""]
         if let ended {
             let minutes = Int(ended.timeIntervalSince(started) / 60)
             out.append("Ended \(clock.string(from: ended)) (\(minutes / 60)h \(minutes % 60)m).")
@@ -157,20 +238,30 @@ enum MeetingNotes {
         }
         if pending > 0 { out.append("\(pending) recording chunk(s) still being transcribed; this file updates when they're done.") }
         let asked = entries.filter { $0["kind"] as? String == "asked" }.count
-        if asked > 0 { out.append("Riley asked Bluey \(asked) question(s); they're marked inline below.") }
+        if asked > 0 { out.append("You asked Bluey \(asked) question(s); they're marked inline below.") }
         out += ["", "## Transcript", ""]
 
-        for entry in entries {
+        // A held question is in both the recording and the live recognizer: show it once, as your question.
+        let merged = TranscriptMerge.merge(entries.map {
+            TranscriptMerge.Line(isTranscript: $0["kind"] as? String == "transcript", isAsked: $0["kind"] as? String == "asked",
+                                 time: $0["time"] as? Double ?? 0, text: $0["text"] as? String ?? "")
+        })
+        for (index, entry) in entries.enumerated() where !merged.drop.contains(index) {
             let text = (entry["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             let time = (entry["time"] as? Double).map { clock.string(from: Date(timeIntervalSince1970: $0)) } ?? ""
+            if merged.asQuestion.contains(index) {
+                out.append("> **[\(time)] You asked Bluey:** \(text)")
+                out.append("")
+                continue
+            }
             switch entry["kind"] as? String {
             case "transcript":
                 out.append("**[\(time)] Speaker \(entry["speaker"] as? String ?? "?"):** \(text)")
             case "heard":
                 out.append("[\(time)] (live) \(text)")
             case "asked":
-                out.append("> **[\(time)] Riley asked Bluey:** \(text)")
+                out.append("> **[\(time)] You asked Bluey:** \(text)")
             case "reply":
                 out.append("> **Bluey:** \(text)")
             case "report":

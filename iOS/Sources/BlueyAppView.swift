@@ -19,7 +19,7 @@ struct BlueyAppView: View {
             }
             .background(Color.black)
             .navigationDestination(for: UUID.self) { id in
-                SessionDetailView(store: store, id: id)
+                SessionDetailView(store: store, link: link, id: id)
             }
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -190,7 +190,7 @@ private struct SessionRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(session.started.formatted(date: .abbreviated, time: .shortened))
+                    Text(session.name ?? session.started.formatted(date: .abbreviated, time: .shortened))
                         .font(.plexSans(15).weight(.semibold))
                         .foregroundStyle(.white)
                     if live {
@@ -229,9 +229,12 @@ private struct SessionRow: View {
 /// One session as a chat: what you said in grey, your questions in blue, his replies in white bubbles.
 struct SessionDetailView: View {
     @ObservedObject var store: SessionStore
+    @ObservedObject var link: MacLink
     let id: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    @State private var renaming = false
+    @State private var nameInput = ""
 
     /// A prompt for an agent (like Claude Code on the Mac) that points it at this session's notes files.
     private func copyPrompt(_ session: BlueySession) {
@@ -263,6 +266,26 @@ struct SessionDetailView: View {
 
     private var session: BlueySession? { store.sessions.first { $0.id == id } }
 
+    /// Asks the Mac for this session's summary and action items (it writes them once the session is over).
+    private func fetchDigest() {
+        guard let session, session.ended != nil, link.connected else { return }
+        link.request(Packet(command: "digest", text: id.uuidString)) { reply in
+            guard let text = reply?.text,
+                  let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  let summary = json["summary"] as? String, !summary.isEmpty else { return }
+            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [],
+                            done: json["done"] as? [String] ?? [])
+            // Ticks made while the Mac was away: send them now.
+            if let done = store.sessions.first(where: { $0.id == id })?.doneItems { sendDone(done) }
+        }
+    }
+
+    private func sendDone(_ done: [String]) {
+        let body: [String: Any] = ["session": id.uuidString, "done": done]
+        guard let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
+        link.send(Packet(command: "actionsDone", text: text))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
@@ -274,12 +297,23 @@ struct SessionDetailView: View {
                 }
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session?.started.formatted(date: .abbreviated, time: .shortened) ?? "Session")
-                        .font(.fredoka(20))
-                        .foregroundStyle(.white)
+                    HStack(spacing: 8) {
+                        Text(session?.name ?? session?.started.formatted(date: .abbreviated, time: .shortened) ?? "Session")
+                            .font(.fredoka(20))
+                            .foregroundStyle(.white)
+                        Button {
+                            nameInput = session?.name ?? ""
+                            renaming = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
                     if let session {
-                        Text("\(SessionRow.duration(session.duration)) · \(session.questionCount) asked"
-                             + (session.transcribing > 0 ? " · transcribing \(session.transcribing) chunk\(session.transcribing == 1 ? "" : "s")…" : ""))
+                        Text(L("\(SessionRow.duration(session.duration)) · \(session.questionCount) asked")
+                             + (session.transcribing > 0 ? " · " + L("transcribing \(session.transcribing) chunk(s)…") : ""))
                             .font(.plexMono(11))
                             .foregroundStyle(Color(hex: Palette.inkSoft))
                     }
@@ -289,7 +323,7 @@ struct SessionDetailView: View {
                     Button { copyPrompt(session) } label: {
                         HStack(spacing: 6) {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            Text(copied ? "Copied" : "Copy prompt for agent")
+                            Text(copied ? L("Copied") : L("Copy prompt for agent"))
                         }
                         .font(.plexSans(13).weight(.semibold))
                         .padding(.horizontal, 14)
@@ -312,6 +346,12 @@ struct SessionDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
+                        if let digest = session?.digest, !digest.isEmpty {
+                            DigestCard(summary: digest, actions: session?.actionItems ?? [], done: Set(session?.doneItems ?? [])) { item in
+                                sendDone(store.toggleDone(id, item: item))
+                            }
+                            .id("digest")
+                        }
                         ForEach(session?.displayEntries ?? []) { entry in
                             EntryView(entry: entry).id(entry.id)
                         }
@@ -319,7 +359,15 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 22)
                     .padding(.bottom, 24)
                 }
-                .onAppear { if let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) } }
+                .onAppear {
+                    fetchDigest()
+                    // A finished session with a summary opens at the top (the summary card); a live one at the latest line.
+                    if session?.digest == nil, let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+                .onChange(of: session?.digest) { _, digest in
+                    if digest != nil { withAnimation { proxy.scrollTo("digest", anchor: .top) } }
+                }
+                .onChange(of: link.connected) { _, _ in fetchDigest() }
                 .onChange(of: session?.entries.count) { _, _ in
                     if let last = session?.entries.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                 }
@@ -327,6 +375,62 @@ struct SessionDetailView: View {
         }
         .background(Color.black)
         .toolbar(.hidden, for: .navigationBar)
+        .alert("Name this session", isPresented: $renaming) {
+            TextField("Design review", text: $nameInput)
+            Button("Save") { store.rename(id, to: nameInput) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Shows here and becomes the title of the Mac's notes file.")
+        }
+    }
+}
+
+/// The Mac's short summary and action items for a finished session, shown above the transcript.
+private struct DigestCard: View {
+    let summary: String
+    let actions: [String]
+    let done: Set<String>
+    var onToggle: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Summary")
+                .font(.fredoka(16))
+                .foregroundStyle(Color(hex: Palette.berry2))
+            Text((try? AttributedString(markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                 ?? AttributedString(summary))
+                .font(.plexSans(14))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            if !actions.isEmpty {
+                Text("Action items")
+                    .font(.fredoka(16))
+                    .foregroundStyle(Color(hex: Palette.berry2))
+                    .padding(.top, 4)
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, item in
+                    let isDone = done.contains(item)
+                    Button { onToggle(item) } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 15))
+                                .foregroundStyle(isDone ? Color(hex: Palette.berry2) : Color(hex: Palette.inkSoft))
+                                .padding(.top, 1)
+                            Text(item)
+                                .font(.plexSans(14))
+                                .foregroundStyle(isDone ? Color(hex: Palette.inkSoft) : .white)
+                                .strikethrough(isDone)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hex: Palette.panel).opacity(0.9), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 

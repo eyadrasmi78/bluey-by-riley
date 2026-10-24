@@ -63,6 +63,12 @@ final class ChunkRecorder {
     private func openChunk(sessionID: UUID, format: AVAudioFormat) {
         let folder = Self.folder.appendingPathComponent(sessionID.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Meeting audio shouldn't ride along in backups, and is protected once the phone has been unlocked
+        // after boot (background recording needs to keep writing while the screen is locked).
+        var audioRoot = Self.folder
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        try? audioRoot.setResourceValues(excluded)
         chunkIndex += 1
         let url = folder.appendingPathComponent(String(format: "chunk-%03d.m4a", chunkIndex))
         let settings: [String: Any] = [
@@ -74,6 +80,8 @@ final class ChunkRecorder {
         file = try? AVAudioFile(forWriting: url, settings: settings,
                                 commonFormat: format.commonFormat, interleaved: format.isInterleaved)
         fileFormat = format
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                               ofItemAtPath: url.path)
         chunkURL = url
         chunkStarted = Date()
     }
@@ -128,7 +136,33 @@ enum NotesSync {
         }
     }
 
+    /// Any audio file still on disk was never confirmed by the Mac (uploads delete their file
+    /// on success). If the app died between writing a chunk and queueing its upload, the pending
+    /// entry never got saved — the file is orphaned. Re-queue those.
+    static func recoverOrphans(store: SessionStore, link: MacLink) {
+        let fm = FileManager.default
+        let root = ChunkRecorder.folder
+        guard let sessionDirs = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return }
+        for dir in sessionDirs {
+            guard let session = UUID(uuidString: dir.lastPathComponent),
+                  let chunks = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey]) else { continue }
+            for file in chunks where file.pathExtension == "m4a" {
+                guard let index = Int(file.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "chunk-", with: "")),
+                      let created = (try? file.resourceValues(forKeys: [.creationDateKey]))?.creationDate else { continue }
+                // The app dies mid-write, the .m4a footer never lands and the file is unreadable:
+                // transcription would fail every time. Resolve it instead of retrying forever.
+                guard (try? AVAudioFile(forReading: file)) != nil else {
+                    store.transcribed(session, index: index, started: created, segments: [])
+                    continue
+                }
+                store.addPending(session, index: index, started: created)
+                upload(session, index: index, started: created, store: store, link: link)
+            }
+        }
+    }
+
     static func retryPending(store: SessionStore, link: MacLink) {
+        recoverOrphans(store: store, link: link)
         for session in store.sessions {
             for chunk in session.pending ?? [] {
                 upload(session.id, index: chunk.index, started: chunk.started, store: store, link: link)
@@ -147,6 +181,7 @@ enum NotesSync {
             var json: [String: Any] = ["id": session.id.uuidString, "started": session.started.timeIntervalSince1970,
                                        "transcribing": session.transcribing, "entries": entries]
             if let ended = session.ended { json["ended"] = ended.timeIntervalSince1970 }
+            if let name = session.name { json["name"] = name }
             guard let data = try? JSONSerialization.data(withJSONObject: json), let text = String(data: data, encoding: .utf8) else { continue }
             link.request(Packet(command: "notes", text: text)) { reply in
                 if let path = reply?.text { store.setNotesPath(session.id, path) }

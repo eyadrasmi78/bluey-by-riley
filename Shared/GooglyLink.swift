@@ -1,10 +1,114 @@
+import CryptoKit
 import Foundation
 import Network
+import Security
 
 /// Everything the Mac and the iPhone agree on: the Bonjour service name,
 /// what a "face update" looks like, and how lines of JSON travel over TCP.
 public enum GooglyService {
     public static let type = "_googly._tcp"
+    /// Advertised by the Mac only while its pairing window is open; hands over the link key.
+    public static let pairType = "_googlypair._tcp"
+}
+
+/// TLS 1.2 PSK cipher suite Apple's TLS stack negotiates between Apple devices
+/// (its PSK-only cipher set doesn't negotiate without one pinned).
+private let pskSuite = SSLCipherSuite(TLS_PSK_WITH_AES_128_GCM_SHA256)
+
+/// Encryption and pairing for the phone↔Mac link.
+///
+/// The link is TLS with a pre-shared key on top of the plain TCP settings below: a phone that
+/// doesn't hold the Mac's key can't even handshake. Pairing once types the pairing code the Mac's
+/// menu bar shows; that brief TLS-PSK channel (key stretched from the code) delivers the Mac's
+/// long-term link key, which the phone stores and offers from then on. Short codes are brute-
+/// forceable from a sniffed pairing handshake, which is exactly why daily traffic never uses
+/// the code-derived key again.
+public enum GooglySecurity {
+    /// Identity tag a paired phone offers.
+    public static let linkIdentity = "bluey-link"
+    /// Identity tag a phone pairing with the menu code offers.
+    public static let pairIdentity = "bluey-pair"
+
+    public static func newLinkKey() -> Data {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+
+    /// No 0/O/1/I/L, so a code read off the Mac screen can't be mistyped.
+    static let codeAlphabet = Array("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
+    public static let pairingCodeLength = 10
+
+    /// 10 characters from 31 symbols (about 49 bits): too many to guess offline from a sniffed handshake.
+    public static func newPairingCode() -> String {
+        String((0..<pairingCodeLength).map { _ in codeAlphabet.randomElement()! })
+    }
+
+    /// Uppercases and drops separators and look-alikes, so "abcde-fghjk" works.
+    public static func normalizePairingCode(_ code: String) -> String {
+        String(code.uppercased().filter(codeAlphabet.contains).prefix(pairingCodeLength))
+    }
+
+    /// For display: ABCDE-FGHJK.
+    public static func formatPairingCode(_ code: String) -> String {
+        let c = normalizePairingCode(code)
+        return c.count > 5 ? c.prefix(5) + "-" + c.dropFirst(5) : c
+    }
+
+    private static func sealKey(_ secret: SharedSecret) -> SymmetricKey {
+        secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data("bluey-seal".utf8), sharedInfo: Data(), outputByteCount: 32)
+    }
+
+    /// Mac side: wraps the link key for the phone's ephemeral public key. Even someone who later cracks the
+    /// pairing code from a recorded handshake can't open this: the private halves never leave the devices.
+    /// Reply format: base64(Mac public key) + "." + base64(sealed key).
+    public static func sealLinkKey(_ linkKey: Data, forPhonePublicKey phonePublic: Data) -> String? {
+        guard let phone = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: phonePublic) else { return nil }
+        let mine = Curve25519.KeyAgreement.PrivateKey()
+        guard let secret = try? mine.sharedSecretFromKeyAgreement(with: phone),
+              let box = try? ChaChaPoly.seal(linkKey, using: sealKey(secret)) else { return nil }
+        return mine.publicKey.rawRepresentation.base64EncodedString() + "." + box.combined.base64EncodedString()
+    }
+
+    /// Phone side: opens the Mac's reply with the phone's ephemeral private key.
+    public static func openLinkKey(_ reply: String, with mine: Curve25519.KeyAgreement.PrivateKey) -> Data? {
+        let parts = reply.split(separator: ".").map(String.init)
+        guard parts.count == 2, let macPublic = Data(base64Encoded: parts[0]), let sealed = Data(base64Encoded: parts[1]),
+              let mac = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: macPublic),
+              let secret = try? mine.sharedSecretFromKeyAgreement(with: mac),
+              let box = try? ChaChaPoly.SealedBox(combined: sealed),
+              let key = try? ChaChaPoly.open(box, using: sealKey(secret)) else { return nil }
+        return key
+    }
+
+    /// Derives the pairing PSK from the pairing code into the PSK used only during pairing.
+    public static func key(fromPairingCode code: String) -> Data {
+        let normalized = normalizePairingCode(code)
+        let derived = HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: Data(normalized.utf8)),
+            salt: Data("bluey-pair".utf8), info: Data(), outputByteCount: 32)
+        return derived.withUnsafeBytes { Data($0) }
+    }
+
+    /// Both sides (Apple's TLS needs a PSK cipher suite pinned and TLS clamped to 1.2 for
+    /// PSK-only handshakes). Pairing uses a separate short-lived listener; see PhoneServer.
+    public static func parameters(key: Data, identity: String) -> NWParameters {
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_add_pre_shared_key(tls.securityProtocolOptions, dispatch(key),
+                                                dispatch(Data(identity.utf8)))
+        sec_protocol_options_add_tls_ciphersuite(tls.securityProtocolOptions, pskSuite)
+        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 2
+        let params = NWParameters(tls: tls, tcp: tcp)
+        params.includePeerToPeer = true
+        return params
+    }
+
+    private static func dispatch(_ data: Data) -> dispatch_data_t {
+        data.withUnsafeBytes { DispatchData(bytes: $0) as dispatch_data_t }
+    }
 }
 
 public enum Mood: String, Codable, CaseIterable, Sendable {

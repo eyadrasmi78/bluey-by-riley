@@ -10,6 +10,7 @@
 		0E02B38E4A5A909A93BA31C5 /* OFL-IBMPlex.txt in Resources */ = {isa = PBXBuildFile; fileRef = 1249C703A2D40793CA70D00E /* OFL-IBMPlex.txt */; };
 		0F5614BE9A55A8498E40F5F1 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1C8AB3F441CA03CDA07FAE72 /* IBMPlexMono-Medium.ttf */; };
 		162BD56C1F6191020071D2A2 /* BlobShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F3C44C342D6E869E6E3B4E /* BlobShape.swift */; };
+		43F1E351A274FDC41E780F61 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7D73D883A82EF2D799838060 /* Assets.xcassets */; };
 		68F797C6A1D3EC7A83674C2A /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A762C0174AFF849BAD1A700 /* PairingView.swift */; };
 		6C5FF10BDE711139D00DB85A /* Fredoka.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D0EEE8F996B2F95804C1ECF8 /* Fredoka.ttf */; };
 		6E03A7EBF9AAFFE4AC87ADE4 /* GooglyLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F71F206238433A6F710528B /* GooglyLink.swift */; };
@@ -22,7 +23,9 @@
 		C2D2BC58460F12FB0D562BB7 /* LiveVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CD953582717D49F21FCD734 /* LiveVoice.swift */; };
 		C763037B3F88C28F89EB61F0 /* MacLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C98F6A89143BA9C926480 /* MacLink.swift */; };
 		CD8A48CB04D56A4BEF47D6AB /* GooglyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C95CBBB828E99EC09708E98E /* GooglyApp.swift */; };
+		CF865B168A2BB4E5C5673B15 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 1B5A194DF43E040B78EE4578 /* Localizable.strings */; };
 		EADE24E60818A63E82366B42 /* FaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3AAA80221D679C8EAAE925 /* FaceView.swift */; };
+		FC34DF156F73A6E714C8DA47 /* TranscriptMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B47ECB97AC957671374AF38 /* TranscriptMerge.swift */; };
 		FC47A19572BFD9F2386A85D3 /* IBMPlexSans.ttf in Resources */ = {isa = PBXBuildFile; fileRef = AB333D12D3F4C506B3E49505 /* IBMPlexSans.ttf */; };
 		FF7676A8F229F874417F4451 /* SoundButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65620B4F67CBB8E8821EBAC8 /* SoundButton.swift */; };
 /* End PBXBuildFile section */
@@ -32,13 +35,16 @@
 		0EAD8A3C72D3899AD5CD2AA8 /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
 		1249C703A2D40793CA70D00E /* OFL-IBMPlex.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "OFL-IBMPlex.txt"; sourceTree = "<group>"; };
 		1510156B478E99D7C4446DCA /* BlueyAppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlueyAppView.swift; sourceTree = "<group>"; };
+		1B5A194DF43E040B78EE4578 /* Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = Localizable.strings; path = ar.lproj/Localizable.strings; sourceTree = "<group>"; };
 		1C8AB3F441CA03CDA07FAE72 /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
 		2CD953582717D49F21FCD734 /* LiveVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoice.swift; sourceTree = "<group>"; };
 		35F3C44C342D6E869E6E3B4E /* BlobShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlobShape.swift; sourceTree = "<group>"; };
 		4A31DC33ABF7869BDE4E0F6C /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		4F71F206238433A6F710528B /* GooglyLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GooglyLink.swift; sourceTree = "<group>"; };
+		5B47ECB97AC957671374AF38 /* TranscriptMerge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptMerge.swift; sourceTree = "<group>"; };
 		65620B4F67CBB8E8821EBAC8 /* SoundButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundButton.swift; sourceTree = "<group>"; };
 		7A762C0174AFF849BAD1A700 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		7D73D883A82EF2D799838060 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7ED2232FD362786D7A5D38B8 /* ChunkRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkRecorder.swift; sourceTree = "<group>"; };
 		83073BF3A1F734ADC97138DF /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
 		AA3AAA80221D679C8EAAE925 /* FaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceView.swift; sourceTree = "<group>"; };
@@ -66,6 +72,7 @@
 		4F61868F579B512B69F537A4 = {
 			isa = PBXGroup;
 			children = (
+				F9E395B437D9DB55585EB1CD /* iOS */,
 				E8E2F33C9E110392983FDDDF /* Shared */,
 				8F41397BC1AEAB53CDE84BB3 /* Sources */,
 				554494C1002555E490E37EB6 /* Products */,
@@ -89,6 +96,7 @@
 				AA3AAA80221D679C8EAAE925 /* FaceView.swift */,
 				C95CBBB828E99EC09708E98E /* GooglyApp.swift */,
 				2CD953582717D49F21FCD734 /* LiveVoice.swift */,
+				1B5A194DF43E040B78EE4578 /* Localizable.strings */,
 				B44C98F6A89143BA9C926480 /* MacLink.swift */,
 				7A762C0174AFF849BAD1A700 /* PairingView.swift */,
 				83073BF3A1F734ADC97138DF /* SessionStore.swift */,
@@ -103,9 +111,18 @@
 			children = (
 				4F71F206238433A6F710528B /* GooglyLink.swift */,
 				4A31DC33ABF7869BDE4E0F6C /* Palette.swift */,
+				5B47ECB97AC957671374AF38 /* TranscriptMerge.swift */,
 				2F574059BA9C302B222352AA /* Fonts */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		F9E395B437D9DB55585EB1CD /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				7D73D883A82EF2D799838060 /* Assets.xcassets */,
+			);
+			path = iOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -139,22 +156,23 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					B9CA7ABB7F3F613763C3DF65 = {
-						DevelopmentTeam = NF73NSV867;
+						DevelopmentTeam = 3L93JYP965;
 						ProvisioningStyle = Automatic;
 					};
 				};
 			};
 			buildConfigurationList = FF71141EA9D22D07B4D3C0E4 /* Build configuration list for PBXProject "GooglyEyes" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				Base,
+				ar,
 				en,
 			);
 			mainGroup = 4F61868F579B512B69F537A4;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			productRefGroup = 554494C1002555E490E37EB6 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -168,10 +186,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				43F1E351A274FDC41E780F61 /* Assets.xcassets in Resources */,
 				6C5FF10BDE711139D00DB85A /* Fredoka.ttf in Resources */,
 				0F5614BE9A55A8498E40F5F1 /* IBMPlexMono-Medium.ttf in Resources */,
 				9C57F9AFA362287C2B93142E /* IBMPlexMono-Regular.ttf in Resources */,
 				FC47A19572BFD9F2386A85D3 /* IBMPlexSans.ttf in Resources */,
+				CF865B168A2BB4E5C5673B15 /* Localizable.strings in Resources */,
 				772A196648CCCC476A2E36F7 /* OFL-Fredoka.txt in Resources */,
 				0E02B38E4A5A909A93BA31C5 /* OFL-IBMPlex.txt in Resources */,
 			);
@@ -196,6 +216,7 @@
 				6F0C91F5B7E911464464DB96 /* Palette.swift in Sources */,
 				6FBD9F2B49D3FD5A78CC4EF1 /* SessionStore.swift in Sources */,
 				FF7676A8F229F874417F4451 /* SoundButton.swift in Sources */,
+				FC34DF156F73A6E714C8DA47 /* TranscriptMerge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -331,7 +352,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = NF73NSV867;
+				DEVELOPMENT_TEAM = 3L93JYP965;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -351,7 +372,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = NF73NSV867;
+				DEVELOPMENT_TEAM = 3L93JYP965;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iOS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

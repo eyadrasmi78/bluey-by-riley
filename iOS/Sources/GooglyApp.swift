@@ -1,4 +1,7 @@
 import SwiftUI
+
+/// Localized String for places that can't use Text's automatic lookup (concatenations, ternaries, toasts).
+func L(_ key: String.LocalizationValue) -> String { String(localized: key) }
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -48,9 +51,24 @@ struct RootView: View {
             .padding(.trailing, 62)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
-            if showPairing && !link.connected {
-                PairingView { withAnimation(.easeOut(duration: 0.3)) { showPairing = false } }
+            if (showPairing || link.needsPairingFor != nil) && !link.connected {
+                PairingView(link: link) { withAnimation(.easeOut(duration: 0.3)) { showPairing = false } }
                     .transition(.opacity)
+            }
+
+            // Problems worth seeing: no key on the Mac, mic denied, he lost the connection…
+            if let toast = live.toast {
+                Text(toast)
+                    .font(.plexSans(14).weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(Color(hex: Palette.panel).opacity(0.94), in: Capsule())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 14)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .allowsHitTesting(false)
+                    .id(toast)
             }
         }
         .background(Color.black)
@@ -64,6 +82,7 @@ struct RootView: View {
             animator.localTalk = { [live] in live.level }
             wireLiveVoice()
             link.start()
+            live.applyWakePhraseSetting()
         }
         .onChange(of: link.connected) { _, connected in
             if connected {
@@ -73,7 +92,13 @@ struct RootView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { link.start() } else if phase == .background { link.stop() }
+            if phase == .active {
+                link.start()
+                live.applyWakePhraseSetting()
+            }
+            // A session keeps going with the screen locked (background audio mode): the link
+            // only steps aside when he's asleep anyway.
+            else if phase == .background, live.state == .asleep { link.stop() }
         }
     }
 

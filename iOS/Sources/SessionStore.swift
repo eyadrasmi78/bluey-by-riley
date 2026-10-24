@@ -28,9 +28,16 @@ struct BlueySession: Codable, Identifiable, Equatable {
     var started: Date
     var ended: Date?
     var entries: [TranscriptEntry] = []
+    /// A name you gave it ("Design review"); shown in the list and used as the notes title.
+    var name: String?
     /// Where the Mac saved this session's meeting notes.
     var notesPath: String?
     var pending: [PendingChunk]?
+    /// The Mac's summary of this session (markdown) and its action items, fetched when you open the session.
+    var digest: String?
+    var actionItems: [String]?
+    /// Action items you've ticked off (synced to the Mac's action-items.md).
+    var doneItems: [String]?
 
     var questionCount: Int { entries.filter { $0.kind == .asked }.count }
 
@@ -47,9 +54,17 @@ struct BlueySession: Codable, Identifiable, Equatable {
     /// questions, replies and reports, in time order.
     var displayEntries: [TranscriptEntry] {
         let properUntil = entries.filter { $0.kind == .transcript }.map(\.time).max() ?? .distantPast
-        return entries
+        var shown = entries
             .filter { !$0.text.isEmpty && !($0.kind == .heard && $0.time <= properUntil) }
             .sorted { $0.time < $1.time }
+        // A held question is in both the recording and the live recognizer: show it once, as your question,
+        // in the recording's (more accurate) wording.
+        let merged = TranscriptMerge.merge(shown.map {
+            TranscriptMerge.Line(isTranscript: $0.kind == .transcript, isAsked: $0.kind == .asked,
+                                 time: $0.time.timeIntervalSince1970, text: $0.text)
+        })
+        for i in merged.asQuestion { shown[i].kind = .asked }
+        return shown.enumerated().filter { !merged.drop.contains($0.offset) }.map(\.element)
     }
 
     var transcribing: Int { pending?.count ?? 0 }
@@ -58,7 +73,8 @@ struct BlueySession: Codable, Identifiable, Equatable {
     var exportText: String {
         let time = DateFormatter()
         time.dateFormat = "h:mm:ss a"
-        var lines = ["Bluey session, \(started.formatted(date: .abbreviated, time: .shortened))", ""]
+        var lines = ["\(name ?? "") \(started.formatted(date: .abbreviated, time: .shortened))"
+            .trimmingCharacters(in: .whitespaces), ""]
         for entry in displayEntries {
             let who: String
             switch entry.kind {
@@ -177,10 +193,40 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func setDigest(_ session: UUID, summary: String, actions: [String], done: [String]) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
+        sessions[i].digest = summary
+        sessions[i].actionItems = actions
+        if sessions[i].doneItems == nil { sessions[i].doneItems = done }  // the phone's own ticks win once it has some
+        scheduleSave(sync: false)
+    }
+
+    /// Ticks an action item on or off. Returns the session's full done list, to send to the Mac.
+    @discardableResult
+    func toggleDone(_ session: UUID, item: String) -> [String] {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return [] }
+        var done = sessions[i].doneItems ?? []
+        if let at = done.firstIndex(of: item) { done.remove(at: at) } else { done.append(item) }
+        sessions[i].doneItems = done
+        scheduleSave(sync: false)
+        return done
+    }
+
     func setNotesPath(_ session: UUID, _ path: String) {
         guard let i = sessions.firstIndex(where: { $0.id == session }), sessions[i].notesPath != path else { return }
         sessions[i].notesPath = path
         scheduleSave(sync: false)
+    }
+
+    /// Give a session a name ("Design review"). Empty clears it. Syncs to the Mac's notes.
+    func rename(_ session: UUID, to name: String) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newName = trimmed.isEmpty ? nil : trimmed
+        guard sessions[i].name != newName else { return }
+        sessions[i].name = newName
+        dirty.insert(sessions[i].id)
+        scheduleSave(sync: true)
     }
 
     /// Recent words from this session, for a fresh connection to pick up where the last one left off.
@@ -222,6 +268,8 @@ final class SessionStore: ObservableObject {
     func delete(_ id: UUID) {
         if id == currentID { currentID = nil }
         sessions.removeAll { $0.id == id }
+        // Also remove any recorded audio still on the phone for this session.
+        try? FileManager.default.removeItem(at: ChunkRecorder.folder.appendingPathComponent(id.uuidString))
         save()
     }
 
@@ -239,6 +287,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func scheduleSave(sync: Bool = false) {
+        if sync { scheduleSync() }  // e.g. a rename: push the new title to the Mac's notes too
         saveWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.save() }
         saveWork = work
@@ -248,6 +297,10 @@ final class SessionStore: ObservableObject {
     private func save() {
         saveWork?.cancel()
         guard let data = try? JSONEncoder().encode(sessions) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        try? data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var url = fileURL
+        var excluded = URLResourceValues()
+        excluded.isExcludedFromBackup = true
+        try? url.setResourceValues(excluded)
     }
 }

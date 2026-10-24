@@ -93,6 +93,31 @@ struct SoundButton: View {
                     .buttonStyle(.plain)
                 }
             }
+            Toggle(isOn: Binding(get: { live.wakePhraseEnabled }, set: { live.wakePhraseEnabled = $0; lastTouch = Date() })) {
+                Text("Wake on “Hey Bluey”")
+                    .font(.plexSans(14))
+                    .foregroundStyle(.white)
+            }
+            .tint(Color(hex: Palette.berry2))
+            if live.wakePhraseEnabled {
+                Text(live.wakePaused
+                     ? L("Paused — it was quiet for a while. Opening the app (or saying hi from a session) resumes him.")
+                     : L("He keeps an ear out while asleep. On-device only — resumes when you open the app."))
+                    .font(.plexSans(11))
+                    .foregroundStyle(Color(hex: Palette.inkSoft))
+                Picker("Wake language", selection: Binding(get: { live.wakeLanguage }, set: { live.wakeLanguage = $0; lastTouch = Date() })) {
+                    Text("English").tag("en")
+                    Text("العربية").tag("ar")
+                }
+                .font(.plexSans(12))
+                .tint(Color(hex: Palette.berry2))
+                Picker("Pause after", selection: Binding(get: { live.wakeQuietLimitMinutes }, set: { live.wakeQuietLimitMinutes = $0; lastTouch = Date() })) {
+                    ForEach([5, 10, 30, 60], id: \.self) { Text("\($0) quiet min").tag($0) }
+                    Text("Never").tag(0)
+                }
+                .font(.plexSans(12))
+                .tint(Color(hex: Palette.berry2))
+            }
             if !link.connected {
                 Text("Connect to your Mac to talk to him.")
                     .font(.plexSans(12))

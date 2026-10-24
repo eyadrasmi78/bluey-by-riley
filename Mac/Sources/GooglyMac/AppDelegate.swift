@@ -22,8 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         overlay.onFace = { [weak self] face in self?.server.send(face) }
         overlay.start()
+        #if DEBUG
         showDemoBubbleIfAsked()
+        #endif
         checkPermissions()
+        #if DEBUG
         if let path = ProcessInfo.processInfo.environment["GOOGLY_DEMO_TRANSCRIBE"], let audio = FileManager.default.contents(atPath: path) {
             // Transcribes an audio file into a throwaway notes folder, prints the lines and quits.
             Task {
@@ -38,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let question = ProcessInfo.processInfo.environment["GOOGLY_DEMO_RESEARCH"] {
             host.demoResearch(question, out: ProcessInfo.processInfo.environment["GOOGLY_DEMO_OUT"] ?? "/tmp/googly-report")
         }
+        #endif
         server.onPhonesChanged = { [weak self] names in
             self?.refreshIcon()
             if names.isEmpty, self?.host.awake == true { self?.host.setAwake(false) }
@@ -46,16 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         server.start()
         host.onChange = { [weak self] in self?.refreshIcon() }
 
-        // ⌥Space wakes him up or puts him back to sleep (same as double tapping him on the phone).
-        HotKeys.shared.register(keyCode: kVK_Space, modifiers: optionKey) { [weak self] in self?.toggleAwake() }
-        // ⌃⌥P point here, ⌃⌥F follow mouse, ⌃⌥D stop pointing, ⌃⌥H hide, ⌃⌥T talk test.
-        HotKeys.shared.register(keyCode: kVK_ANSI_P) { [weak self] in self?.pointHere() }
-        HotKeys.shared.register(keyCode: kVK_ANSI_F) { [weak self] in self?.toggleFollow() }
-        HotKeys.shared.register(keyCode: kVK_ANSI_D) { [weak self] in self?.overlay.goHome() }
-        HotKeys.shared.register(keyCode: kVK_ANSI_H) { [weak self] in self?.toggleShow() }
-        HotKeys.shared.register(keyCode: kVK_ANSI_T) { [weak self] in self?.overlay.talkTest() }
-        // ⌃⌥S stops him using the computer right away.
-        HotKeys.shared.register(keyCode: kVK_ANSI_S) { [weak self] in self?.stopActions() }
+        registerHotKeys()
 
         if Keychain.get(.openai) == nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.editKeys() }
@@ -64,6 +59,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func refreshIcon() {
         statusItem.button?.appearsDisabled = server.phoneNames.isEmpty
+    }
+
+    // MARK: Global shortcuts (user-rebindable via the Shortcuts submenu)
+
+    private struct HotKeyDef {
+        let id: String
+        let title: String
+        let keyCode: Int
+        let modifiers: Int
+    }
+
+    private func hotKeyDefs() -> [HotKeyDef] {
+        [
+            HotKeyDef(id: "wake", title: "Wake Up / Follow", keyCode: kVK_Space, modifiers: optionKey),
+            HotKeyDef(id: "point", title: "Point Here", keyCode: kVK_ANSI_P, modifiers: controlKey | optionKey),
+            HotKeyDef(id: "follow", title: "Follow Mouse", keyCode: kVK_ANSI_F, modifiers: controlKey | optionKey),
+            HotKeyDef(id: "dock", title: "Go Home", keyCode: kVK_ANSI_D, modifiers: controlKey | optionKey),
+            HotKeyDef(id: "hide", title: "Hide / Show Cursor", keyCode: kVK_ANSI_H, modifiers: controlKey | optionKey),
+            HotKeyDef(id: "talkTest", title: "Talk Test", keyCode: kVK_ANSI_T, modifiers: controlKey | optionKey),
+            HotKeyDef(id: "stop", title: "Stop Him", keyCode: kVK_ANSI_S, modifiers: controlKey | optionKey),
+        ]
+    }
+
+    private func registerHotKeys() {
+        HotKeys.shared.unregisterAll()
+        for def in hotKeyDefs() {
+            let combo = Settings.hotkeyOverride(for: def.id) ?? (keyCode: def.keyCode, modifiers: def.modifiers)
+            HotKeys.shared.register(keyCode: combo.keyCode, modifiers: combo.modifiers) { [weak self] in
+                self?.performHotKey(def.id)
+            }
+        }
+    }
+
+    private func performHotKey(_ id: String) {
+        switch id {
+        case "wake": toggleAwake()
+        case "point": pointHere()
+        case "follow": toggleFollow()
+        case "dock": overlay.goHome()
+        case "hide": toggleShow()
+        case "talkTest": overlay.talkTest()
+        case "stop": stopActions()
+        default: break
+        }
+    }
+
+    private var rebindMonitor: Any?
+
+    @objc private func rebindShortcut(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = T("Press a New Shortcut")
+        alert.informativeText = T("Hold at least one of ⌃ ⌥ ⇧ ⌘ plus a key. Delete restores the default, Escape cancels.")
+        alert.addButton(withTitle: T("Cancel"))
+        rebindMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return nil }
+            let code = Int(event.keyCode)
+            if code == kVK_Escape { NSApp.stopModal(); return nil }
+            if code == kVK_Delete {
+                Settings.setHotkeyOverride(for: id, nil)
+                self.registerHotKeys()
+                NSApp.stopModal()
+                return nil
+            }
+            let flags = event.modifierFlags
+            var mods = 0
+            if flags.contains(.control) { mods |= controlKey }
+            if flags.contains(.option) { mods |= optionKey }
+            if flags.contains(.shift) { mods |= shiftKey }
+            if flags.contains(.command) { mods |= cmdKey }
+            guard mods != 0 else { return nil }
+            Settings.setHotkeyOverride(for: id, (code, mods))
+            self.registerHotKeys()
+            NSApp.stopModal()
+            return nil
+        }
+        alert.runModal()
+        if let rebindMonitor { NSEvent.removeMonitor(rebindMonitor) }
+        rebindMonitor = nil
     }
 
     // MARK: Actions
@@ -79,8 +154,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlay.goHome()
     }
 
+    /// Switches Bluey's own menus and dialogs between English and Arabic (without touching macOS settings), then relaunches.
+    @objc private func toggleLanguage() {
+        let arabicNow = Bundle.main.preferredLocalizations.first == "ar"
+        UserDefaults.standard.set([arabicNow ? "en" : "ar"], forKey: "AppleLanguages")
+        UserDefaults.standard.synchronize()
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+
     @objc private func dock() { overlay.goHome() }
 
+    #if DEBUG
     /// For checking the speech bubble's look: GOOGLY_DEMO_BUBBLE=top|middle|home shows a sample reply.
     private func showDemoBubbleIfAsked() {
         guard let where_ = ProcessInfo.processInfo.environment["GOOGLY_DEMO_BUBBLE"],
@@ -90,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if where_ != "home" {
                 self.overlay.mode = .pinned(CGPoint(x: thing.midX, y: thing.maxY + 3))
-                self.overlay.view.speechTarget = thing
+                self.overlay.speechTargetGlobal = thing
             }
             self.overlay.view.caption = ProcessInfo.processInfo.environment["GOOGLY_DEMO_TEXT"]
                 ?? "That's the prompt box, where you type to Claude. Cheeky little thing."
@@ -118,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
+    #endif
     @objc private func toggleShow() { settings.showCursor.toggle() }
     @objc private func toggleGlow() { settings.glow.toggle() }
     @objc private func setTrail(_ item: NSMenuItem) {
@@ -134,7 +223,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// On launch, asks for whatever he still needs (so Bluey shows up in those Settings lists),
     /// and keeps a small status file so it's easy to check what's allowed.
     private func checkPermissions() {
-        guard ProcessInfo.processInfo.environment["GOOGLY_DEMO_OUT"] == nil else { return }
         if settings.computerControl && !ComputerControl.isTrusted { ComputerControl.askForPermission() }
         if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         let status = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -145,9 +233,171 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.fire()
     }
 
+    @objc private func pairPhone() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSLog("Googly: Pair a Phone chosen")
+        let code = GooglySecurity.newPairingCode()
+        server.beginPairing(code: code)
+        let alert = NSAlert()
+        alert.messageText = T("Pair a Phone") + " — \(GooglySecurity.formatPairingCode(code))"
+        alert.informativeText = T("On the phone, open Bluey and type this code when asked. The code works once, for 10 minutes (or until 5 wrong tries), and only your phone will know the link key afterwards. Every message between the devices is encrypted.")
+        alert.addButton(withTitle: T("Done"))
+        alert.runModal()
+    }
+
+    @objc private func unpairPhones() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = T("Unpair all phones?")
+        alert.informativeText = T("Every phone will need the pairing code again to connect.")
+        alert.addButton(withTitle: T("Unpair All"))
+        alert.addButton(withTitle: T("Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Keychain.set(.linkKey, GooglySecurity.newLinkKey().base64EncodedString())
+        server.restart()
+    }
+
+    @objc private func checkForUpdates() {
+        NSApp.activate(ignoringOtherApps: true)
+        let bundled = (try? String(contentsOf: Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Resources/commit.txt"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/rbrown101010/bluey-by-riley/commits?sha=main&per_page=1")!)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        Task { @MainActor in
+            let alert = NSAlert()
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard (response as? HTTPURLResponse)?.statusCode == 200,
+                      let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                      let latest = list.first?["sha"] as? String else { throw URLError(.cannotParseResponse) }
+                if let bundled, latest == bundled {
+                    alert.messageText = T("Bluey is up to date")
+                    alert.informativeText = String(format: T("This build is the latest main (%@)."), String(bundled.prefix(8)))
+                    alert.addButton(withTitle: T("Nice"))
+                    alert.runModal()
+                    return
+                }
+                alert.messageText = T("A newer Bluey exists")
+                alert.informativeText = String(format: T("Latest main is %@; this build is %@. Updating fast-forwards your local copy to origin/main (after showing you the changes) and rebuilds the Mac app — the phone app then needs a rebuild in Xcode."), String(latest.prefix(8)), bundled.map { String($0.prefix(8)) } ?? "?")
+                alert.addButton(withTitle: T("Run Updater in Terminal"))
+                alert.addButton(withTitle: T("Later"))
+                if alert.runModal() == .alertFirstButtonReturn {
+                    // App sits at <repo>/build/Bluey.app; the updater is <repo>/scripts/update.sh.
+                    let repo = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+                    let script = repo.appendingPathComponent("scripts/update.sh")
+                    // Only run it from inside a real checkout (not, say, ~/Downloads/Bluey.app → ~/scripts).
+                    guard FileManager.default.fileExists(atPath: repo.appendingPathComponent(".git").path),
+                          FileManager.default.fileExists(atPath: script.path) else {
+                        let note = NSAlert()
+                        note.messageText = T("Can't update from here")
+                        note.informativeText = T("Run Bluey from its project folder's build/ directory to use the updater.")
+                        note.runModal()
+                        return
+                    }
+                    if let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") {
+                        try? await NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: .init())
+                    }
+                }
+            } catch {
+                alert.messageText = T("Couldn't check right now")
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: T("OK"))
+                alert.runModal()
+            }
+        }
+    }
+
+    @objc private func searchNotes() {
+        NSApp.activate(ignoringOtherApps: true)
+        let ask = NSAlert()
+        ask.messageText = T("Search Meeting Notes")
+        ask.informativeText = T("Searches every session's transcript, summary and Bluey's answers.")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        ask.accessoryView = field
+        ask.addButton(withTitle: T("Search"))
+        ask.addButton(withTitle: T("Cancel"))
+        ask.window.initialFirstResponder = field
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        let hits = MeetingNotes.search(field.stringValue)
+        let result = NSAlert()
+        guard !hits.isEmpty else {
+            result.messageText = T("No matches")
+            result.addButton(withTitle: T("OK"))
+            result.runModal()
+            return
+        }
+        result.messageText = String(format: T("%lld matches"), hits.count)
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 560, height: 26))
+        for hit in hits {
+            popup.addItem(withTitle: "\(MeetingNotes.title(of: hit.folder).prefix(30)) · \(hit.line.prefix(70))")
+        }
+        result.accessoryView = popup
+        result.addButton(withTitle: T("Open Notes"))
+        result.addButton(withTitle: T("Close"))
+        if result.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(hits[popup.indexOfSelectedItem].folder.appendingPathComponent("notes.md"))
+        }
+    }
+
+    @objc private func openActionItems() {
+        NSWorkspace.shared.open(MeetingNotes.rebuildAllActionItems())
+    }
+
+    @objc private func exportMeetingPDF() {
+        NSApp.activate(ignoringOtherApps: true)
+        let folders = MeetingNotes.sessionFolders()
+        let alert = NSAlert()
+        guard !folders.isEmpty else {
+            alert.messageText = T("No meeting notes yet.")
+            alert.addButton(withTitle: T("OK"))
+            alert.runModal()
+            return
+        }
+        alert.messageText = T("Export Meeting as PDF")
+        alert.informativeText = T("Pick a session. The PDF is saved next to its notes.")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 420, height: 26))
+        for folder in folders { popup.addItem(withTitle: MeetingNotes.title(of: folder)) }
+        alert.accessoryView = popup
+        alert.addButton(withTitle: T("Export"))
+        alert.addButton(withTitle: T("Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let pdf = MeetingNotes.exportPDF(folder: folders[popup.indexOfSelectedItem]) {
+            NSWorkspace.shared.activateFileViewerSelecting([pdf])
+        } else {
+            let failed = NSAlert()
+            failed.messageText = T("Couldn't make the PDF.")
+            failed.addButton(withTitle: T("OK"))
+            failed.runModal()
+        }
+    }
+
     @objc private func openNotes() {
         try? FileManager.default.createDirectory(at: MeetingNotes.root, withIntermediateDirectories: true)
         NSWorkspace.shared.open(MeetingNotes.root)
+    }
+
+    @objc private func showActionLog() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = T("What He Did Recently")
+        alert.informativeText = T("Every time he clicked, typed, pressed keys, scrolled, dragged or opened something — newest first. The full log is ~/Library/Application Support/Googly/actions.log.")
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let text = NSTextView(frame: scroll.bounds)
+        text.autoresizingMask = [.width]
+        text.isRichText = false
+        text.isEditable = false
+        text.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        text.string = ActionLog.recent()
+        text.textContainerInset = NSSize(width: 6, height: 6)
+        scroll.documentView = text
+        alert.accessoryView = scroll
+        alert.addButton(withTitle: T("Close"))
+        alert.addButton(withTitle: T("Clear the Log"))
+        if alert.runModal() == .alertSecondButtonReturn { ActionLog.clear() }
     }
 
     @objc private func stopActions() {
@@ -159,6 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.computerControl && !ComputerControl.isTrusted { ComputerControl.askForPermission() }
         restartIfAwake()  // his tools change with this switch
     }
+
+    @objc private func toggleAskRisky() { settings.askBeforeRisky.toggle() }
 
     @objc private func allowComputerControl() {
         ComputerControl.askForPermission()
@@ -175,8 +427,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func editPersonality() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "His Personality"
-        alert.informativeText = "Describe who he is and how he talks. How he looks at and points at your screen stays built in."
+        alert.messageText = T("His Personality")
+        alert.informativeText = T("Describe who he is and how he talks. How he looks at and points at your screen stays built in.")
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 220))
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
@@ -188,9 +440,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         text.textContainerInset = NSSize(width: 6, height: 6)
         scroll.documentView = text
         alert.accessoryView = scroll
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Reset to Default")
+        alert.addButton(withTitle: T("Save"))
+        alert.addButton(withTitle: T("Cancel"))
+        alert.addButton(withTitle: T("Reset to Default"))
         alert.window.initialFirstResponder = text
         switch alert.runModal() {
         case .alertFirstButtonReturn: RealtimeHost.personality = text.string
@@ -203,13 +455,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func editKeys() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "OpenAI API Key"
-        alert.informativeText = "Saved privately on this Mac (not in the project files). The phone only ever gets short-lived keys."
+        alert.messageText = T("OpenAI API Key")
+        alert.informativeText = T("Saved privately on this Mac (not in the project files). The phone only ever gets short-lived keys.")
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = Keychain.get(.openai) == nil ? "sk-…" : "Key saved. Paste a new one to replace it."
         alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: T("Save"))
+        alert.addButton(withTitle: T("Cancel"))
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -226,11 +478,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         let phones = server.phoneNames
-        let status = NSMenuItem(title: phones.isEmpty ? "Waiting for the phone app…" : "Phone connected: \(phones.joined(separator: ", "))",
+        let status = NSMenuItem(title: phones.isEmpty ? T("Waiting for the phone app…") : String(format: T("Phone connected: %@"), phones.joined(separator: ", ")),
                                 action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
-        let wake = NSMenuItem(title: host.awake ? "Go to Sleep (Follow Mode)" : "Wake Up and Talk",
+        let wake = NSMenuItem(title: host.awake ? T("Go to Sleep (Follow Mode)") : T("Wake Up and Talk"),
                               action: #selector(toggleAwake), keyEquivalent: " ")
         wake.keyEquivalentModifierMask = [.option]
         wake.target = self
@@ -244,7 +496,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.computerControl && !ComputerControl.isTrusted {
             menu.addItem(item("Allow Clicking and Typing (Accessibility)…", #selector(allowComputerControl)))
         }
+        if settings.computerControl {
+            let ask = item("Ask Before Risky Actions", #selector(toggleAskRisky))
+            ask.state = settings.askBeforeRisky ? .on : .off
+            menu.addItem(ask)
+        }
         menu.addItem(item("Stop Him", #selector(stopActions), key: "s"))
+        menu.addItem(item("Recent Actions…", #selector(showActionLog)))
         menu.addItem(.separator())
 
         let point = item("Point Here", #selector(pointHere), key: "p")
@@ -267,7 +525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let sizeMenu = NSMenu()
         for (name, size) in [("Small", 48), ("Medium", 72), ("Large", 96), ("Huge", 120)] {
-            let s = item("\(name) (\(size) pt)", #selector(setSize(_:)))
+            let s = item("\(T(name)) (\(size) pt)", #selector(setSize(_:)))
             s.tag = size
             s.state = Int(settings.cursorSize) == size ? .on : .off
             sizeMenu.addItem(s)
@@ -284,8 +542,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Phone Sits Under", phoneMenu))
 
         menu.addItem(item("Open Meeting Notes", #selector(openNotes)))
+        menu.addItem(item("Search Meeting Notes…", #selector(searchNotes)))
+        menu.addItem(item("Open Action Items", #selector(openActionItems)))
+        menu.addItem(item("Export Meeting as PDF…", #selector(exportMeetingPDF)))
         menu.addItem(item("Personality…", #selector(editPersonality)))
         menu.addItem(item("OpenAI Key…", #selector(editKeys)))
+        menu.addItem(item("Pair a Phone…", #selector(pairPhone)))
+        menu.addItem(item("Unpair All Phones…", #selector(unpairPhones)))
+        menu.addItem(item("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(.separator())
 
         let trailMenu = NSMenu()
@@ -304,20 +568,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         show.state = settings.showCursor ? .on : .off
         menu.addItem(show)
 
+        let shortcuts = NSMenu()
+        for def in hotKeyDefs() {
+            let combo = Settings.hotkeyOverride(for: def.id) ?? (keyCode: def.keyCode, modifiers: def.modifiers)
+            let m = item("\(T(def.title)) — \(HotKeys.describe(keyCode: combo.keyCode, modifiers: combo.modifiers))",
+                         #selector(rebindShortcut(_:)))
+            m.representedObject = def.id
+            m.keyEquivalent = ""
+            shortcuts.addItem(m)
+        }
+        menu.addItem(submenu("Shortcuts", shortcuts))
+
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Bluey", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let arabicNow = Bundle.main.preferredLocalizations.first == "ar"
+        menu.addItem(item(arabicNow ? "English" : "العربية", #selector(toggleLanguage)))
+        menu.addItem(NSMenuItem(title: T("Quit Bluey"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     /// Menu item that shows its global shortcut (⌃⌥ + key) when given one.
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let item = NSMenuItem(title: T(title), action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = [.control, .option]
         item.target = self
         return item
     }
 
     private func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: T(title), action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
     }

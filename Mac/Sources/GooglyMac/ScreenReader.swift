@@ -14,6 +14,9 @@ struct ScreenSnapshot {
     let jpeg: Data
     let lines: [(line: Target, words: [Target])]
     let size: CGSize
+    /// The captured display's top-left in Quartz global space (main display: 0,0). Targets are
+    /// display-local; add this to click/point coordinates.
+    var origin: CGPoint = .zero
     /// The frontmost app and its clickable controls (empty without Accessibility permission).
     var app: String? = nil
     var controls: [ControlsReader.Control] = []
@@ -73,13 +76,38 @@ enum ScreenReaderError: LocalizedError {
     var errorDescription: String? { "I couldn't find the main display to look at." }
 }
 
-/// Captures the main display (without Googly's own cursor and captions) and reads every word with its exact box.
+/// Captures the display under the user's mouse (without Googly's own cursor and captions) and
+/// reads every word with its exact box. Multi-display: falls back to the main display.
 enum ScreenReader {
+    /// An NSScreen frame (Cocoa, bottom-left origin on the main display) to Quartz global (top-left of main).
+    private static func quartzRect(_ cocoa: CGRect) -> CGRect {
+        let mainHeight = NSScreen.screens.first?.frame.height ?? cocoa.height
+        return CGRect(x: cocoa.minX, y: mainHeight - cocoa.maxY, width: cocoa.width, height: cocoa.height)
+    }
+
+    /// The NSScreen matching this SCDisplay (same Quartz size+position).
+    private static func screen(for display: SCDisplay) -> NSScreen? {
+        // The display ID is exact; the rectangle (size and both global coordinates) is the fallback.
+        if let byID = NSScreen.screens.first(where: {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.displayID
+        }) { return byID }
+        return NSScreen.screens.first { screen in
+            let rect = quartzRect(screen.frame)
+            return rect.size == CGSize(width: display.width, height: display.height)
+                && abs(rect.minX - CGFloat(display.frame.minX)) < 2
+                && abs(rect.minY - CGFloat(display.frame.minY)) < 2
+        } ?? NSScreen.screens.first
+    }
+
     static func snapshot() async throws -> ScreenSnapshot {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first else {
-            throw ScreenReaderError.noDisplay
-        }
+        let mouse = ComputerControl.mouseLocation  // Quartz global
+        let display = content.displays.first(where: { display in
+            guard let screen = screen(for: display) else { return false }
+            return quartzRect(screen.frame).contains(mouse)
+        }) ?? content.displays.first(where: { $0.displayID == CGMainDisplayID() }) ?? content.displays.first
+        guard let display else { throw ScreenReaderError.noDisplay }
+        let quartzTopLeft = screen(for: display).map { quartzRect($0.frame).origin } ?? .zero
         let me = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
         let filter = SCContentFilter(display: display, excludingApplications: me, exceptingWindows: [])
         let config = SCStreamConfiguration()
@@ -89,11 +117,14 @@ enum ScreenReader {
         config.showsCursor = false
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         let size = CGSize(width: display.width, height: display.height)
-        // Read the front app's controls at the same time as the text.
-        let controlsTask = Task.detached(priority: .userInitiated) { ControlsReader.read(screen: size) }
+        // Read the front app's controls at the same time as the text (scoped to this display).
+        let controlsTask = Task.detached(priority: .userInitiated) {
+            ControlsReader.read(screen: size, origin: quartzTopLeft)
+        }
         let lines = try recognize(image, in: size)
         let controls = await controlsTask.value
-        return ScreenSnapshot(jpeg: jpeg(image, maxEdge: 1100), lines: lines, size: size, app: controls.app, controls: controls.controls)
+        return ScreenSnapshot(jpeg: jpeg(image, maxEdge: 1100), lines: lines, size: size,
+                              origin: quartzTopLeft, app: controls.app, controls: controls.controls)
     }
 
     static func recognize(_ image: CGImage, in size: CGSize) throws -> [(line: Target, words: [Target])] {

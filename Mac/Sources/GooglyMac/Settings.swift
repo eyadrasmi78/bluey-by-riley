@@ -1,4 +1,7 @@
 import Foundation
+
+/// Looks a string up in the app's Localizable.strings (Arabic when the Mac is set to Arabic; otherwise the English text).
+func T(_ key: String) -> String { NSLocalizedString(key, comment: "") }
 import GooglyShared
 
 /// User choices from the menu bar, kept between launches.
@@ -7,6 +10,21 @@ final class Settings {
     private let defaults = UserDefaults.standard
 
     var onChange: (() -> Void)?
+
+    /// A user-rebound global shortcut ("keyCode,carbonModifiers") or nil for the default.
+    static func hotkeyOverride(for id: String) -> (keyCode: Int, modifiers: Int)? {
+        guard let raw = UserDefaults.standard.string(forKey: "hotkey." + id) else { return nil }
+        let parts = raw.split(separator: ",").compactMap { Int($0) }
+        return parts.count == 2 ? (parts[0], parts[1]) : nil
+    }
+
+    static func setHotkeyOverride(for id: String, _ combo: (keyCode: Int, modifiers: Int)?) {
+        if let combo {
+            UserDefaults.standard.set("\(combo.keyCode),\(combo.modifiers)", forKey: "hotkey." + id)
+        } else {
+            UserDefaults.standard.removeObject(forKey: "hotkey." + id)
+        }
+    }
 
     /// Cursor size in points (the design's default is 72).
     var cursorSize: Double {
@@ -43,8 +61,19 @@ final class Settings {
 
     /// Lets him click, type, press keys and open things when you ask.
     var computerControl: Bool {
-        get { defaults.object(forKey: "computerControl") as? Bool ?? true }
+        // Off for new installs; anyone who has already let him act (there is an action log) keeps it on.
+        get {
+            defaults.object(forKey: "computerControl") as? Bool
+                ?? FileManager.default.fileExists(atPath: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("Googly/actions.log").path)
+        }
         set { defaults.set(newValue, forKey: "computerControl"); onChange?() }
+    }
+
+    /// Pops up on the Mac before anything hard to undo (sending, deleting, buying, Return, closing…).
+    var askBeforeRisky: Bool {
+        get { defaults.object(forKey: "askBeforeRisky") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "askBeforeRisky"); onChange?() }
     }
 
     /// How the cursor's path shows while it flies.
