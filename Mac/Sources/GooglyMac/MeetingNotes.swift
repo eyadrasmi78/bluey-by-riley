@@ -44,11 +44,11 @@ enum MeetingNotes {
         let text = """
         # Bluey Notes
 
-        Meeting notes recorded by Riley's Bluey app (the blueberry on the iPhone). One folder per listening \
+        Meeting notes recorded by the Bluey app (the blueberry on the iPhone). One folder per listening \
         session, named by start time.
 
         In each session folder:
-        - `notes.md`: the full transcript with timestamps and speaker labels, plus Riley's questions to Bluey, \
+        - `notes.md`: the full transcript with timestamps and speaker labels, plus your questions to Bluey, \
         Bluey's replies and any research reports, in time order. Start here. A short summary is appended at \
         the end once the session is finished.
         - `summary.md`: the same summary on its own.
@@ -138,7 +138,12 @@ enum MeetingNotes {
         if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: folder.appendingPathComponent("session.json"), options: .atomic)
         }
-        try? markdown(json, started: started).write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
+        var notes = markdown(json, started: started)
+        // A later sync rewrites notes.md from the phone's copy; keep the summary that was added after the session ended.
+        if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8), !summary.isEmpty {
+            notes += "\n## Summary\n\n" + summary + "\n"
+        }
+        try? notes.write(to: folder.appendingPathComponent("notes.md"), atomically: true, encoding: .utf8)
         summarizeSoon(json: json, folder: folder)
         return folder
     }
@@ -232,7 +237,7 @@ enum MeetingNotes {
         }
         if pending > 0 { out.append("\(pending) recording chunk(s) still being transcribed; this file updates when they're done.") }
         let asked = entries.filter { $0["kind"] as? String == "asked" }.count
-        if asked > 0 { out.append("Riley asked Bluey \(asked) question(s); they're marked inline below.") }
+        if asked > 0 { out.append("You asked Bluey \(asked) question(s); they're marked inline below.") }
         out += ["", "## Transcript", ""]
 
         for entry in entries {
@@ -245,7 +250,7 @@ enum MeetingNotes {
             case "heard":
                 out.append("[\(time)] (live) \(text)")
             case "asked":
-                out.append("> **[\(time)] Riley asked Bluey:** \(text)")
+                out.append("> **[\(time)] You asked Bluey:** \(text)")
             case "reply":
                 out.append("> **Bluey:** \(text)")
             case "report":
