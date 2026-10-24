@@ -36,6 +36,8 @@ struct BlueySession: Codable, Identifiable, Equatable {
     /// The Mac's summary of this session (markdown) and its action items, fetched when you open the session.
     var digest: String?
     var actionItems: [String]?
+    /// Action items you've ticked off (synced to the Mac's action-items.md).
+    var doneItems: [String]?
 
     var questionCount: Int { entries.filter { $0.kind == .asked }.count }
 
@@ -191,11 +193,23 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func setDigest(_ session: UUID, summary: String, actions: [String]) {
+    func setDigest(_ session: UUID, summary: String, actions: [String], done: [String]) {
         guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
         sessions[i].digest = summary
         sessions[i].actionItems = actions
+        if sessions[i].doneItems == nil { sessions[i].doneItems = done }  // the phone's own ticks win once it has some
         scheduleSave(sync: false)
+    }
+
+    /// Ticks an action item on or off. Returns the session's full done list, to send to the Mac.
+    @discardableResult
+    func toggleDone(_ session: UUID, item: String) -> [String] {
+        guard let i = sessions.firstIndex(where: { $0.id == session }) else { return [] }
+        var done = sessions[i].doneItems ?? []
+        if let at = done.firstIndex(of: item) { done.remove(at: at) } else { done.append(item) }
+        sessions[i].doneItems = done
+        scheduleSave(sync: false)
+        return done
     }
 
     func setNotesPath(_ session: UUID, _ path: String) {

@@ -39,7 +39,30 @@ extension MeetingNotes {
               let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8) else {
             return ["summary": "", "actions": [String]()]
         }
-        return ["summary": summary, "actions": actionItems(in: summary)]
+        return ["summary": summary, "actions": actionItems(in: summary), "done": doneActionItems(folder: folder)]
+    }
+
+    /// Items ticked off ("- [x] …") in the session's action-items.md.
+    static func doneActionItems(folder: URL) -> [String] {
+        guard let text = try? String(contentsOf: folder.appendingPathComponent("action-items.md"), encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").filter { $0.lowercased().hasPrefix("- [x] ") }.map { String($0.dropFirst(6)) }
+    }
+
+    /// Ticks (or unticks) items in the session's action-items.md to match the phone, then refreshes the all-meetings file.
+    @discardableResult
+    static func setActionItemsDone(session: String, done: [String]) -> Bool {
+        guard let folder = existingFolder(session: session) else { return false }
+        let file = folder.appendingPathComponent("action-items.md")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return false }
+        let doneSet = Set(done)
+        let lines = text.components(separatedBy: "\n").map { line -> String in
+            guard line.hasPrefix("- [ ] ") || line.lowercased().hasPrefix("- [x] ") else { return line }
+            let item = String(line.dropFirst(6))
+            return (doneSet.contains(item) ? "- [x] " : "- [ ] ") + item
+        }
+        try? lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        rebuildAllActionItems()
+        return true
     }
 
     // MARK: Search

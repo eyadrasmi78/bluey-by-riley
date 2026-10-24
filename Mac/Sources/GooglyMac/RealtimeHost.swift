@@ -75,6 +75,12 @@ final class RealtimeHost {
             let body = MeetingNotes.digest(session: packet.text ?? "")
             let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap { String(data: $0, encoding: .utf8) }
             reply(Packet(command: "digest", callID: packet.callID, text: text))
+        case "actionsDone":
+            // The phone ticked items off: {"session": id, "done": [item, …]} — mirror it in the notes files.
+            guard let json = packet.text.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+                  let session = json["session"] as? String else { return }
+            let saved = MeetingNotes.setActionItemsDone(session: session, done: json["done"] as? [String] ?? [])
+            if packet.callID != nil { reply(Packet(command: "actionsDone", callID: packet.callID, text: saved ? "ok" : nil)) }
         case "awake":
             setAwake(true)
         case "asleep":

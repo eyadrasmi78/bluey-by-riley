@@ -273,8 +273,17 @@ struct SessionDetailView: View {
             guard let text = reply?.text,
                   let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
                   let summary = json["summary"] as? String, !summary.isEmpty else { return }
-            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [])
+            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [],
+                            done: json["done"] as? [String] ?? [])
+            // Ticks made while the Mac was away: send them now.
+            if let done = store.sessions.first(where: { $0.id == id })?.doneItems { sendDone(done) }
         }
+    }
+
+    private func sendDone(_ done: [String]) {
+        let body: [String: Any] = ["session": id.uuidString, "done": done]
+        guard let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
+        link.send(Packet(command: "actionsDone", text: text))
     }
 
     var body: some View {
@@ -338,7 +347,9 @@ struct SessionDetailView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         if let digest = session?.digest, !digest.isEmpty {
-                            DigestCard(summary: digest, actions: session?.actionItems ?? [])
+                            DigestCard(summary: digest, actions: session?.actionItems ?? [], done: Set(session?.doneItems ?? [])) { item in
+                                sendDone(store.toggleDone(id, item: item))
+                            }
                         }
                         ForEach(session?.displayEntries ?? []) { entry in
                             EntryView(entry: entry).id(entry.id)
@@ -373,6 +384,8 @@ struct SessionDetailView: View {
 private struct DigestCard: View {
     let summary: String
     let actions: [String]
+    let done: Set<String>
+    var onToggle: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -390,16 +403,23 @@ private struct DigestCard: View {
                     .foregroundStyle(Color(hex: Palette.berry2))
                     .padding(.top, 4)
                 ForEach(Array(actions.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color(hex: Palette.inkSoft))
-                            .padding(.top, 3)
-                        Text(item)
-                            .font(.plexSans(14))
-                            .foregroundStyle(.white)
-                            .fixedSize(horizontal: false, vertical: true)
+                    let isDone = done.contains(item)
+                    Button { onToggle(item) } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 15))
+                                .foregroundStyle(isDone ? Color(hex: Palette.berry2) : Color(hex: Palette.inkSoft))
+                                .padding(.top, 1)
+                            Text(item)
+                                .font(.plexSans(14))
+                                .foregroundStyle(isDone ? Color(hex: Palette.inkSoft) : .white)
+                                .strikethrough(isDone)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
