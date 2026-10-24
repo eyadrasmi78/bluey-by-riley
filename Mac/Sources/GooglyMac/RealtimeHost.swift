@@ -20,6 +20,8 @@ final class RealtimeHost {
     /// True while he's awake and talking with you (false = follow mode).
     private(set) var awake = false
     var onChange: (() -> Void)?
+    /// A session's notes changed on the Mac (e.g. an item ticked off by voice): tell the phones to refresh it.
+    var onNotesChanged: ((String) -> Void)?
 
     init(overlay: CursorOverlay) {
         self.overlay = overlay
@@ -194,6 +196,11 @@ final class RealtimeHost {
                  required: ["question"]),
             tool("open_action_items",
                  "List the user's open (not yet ticked off) action items from their meeting notes, newest meeting first. Use when they ask what's still open, what they need to do, or about their to-dos or action items."),
+            tool("complete_action_item",
+                 "Tick off one of the user's action items in their meeting notes (or reopen one), when they say it's done, e.g. \"mark the budget one done\". Describe the item in a few words; you'll be told which one was ticked, or asked to clarify.",
+                 ["item": ["type": "string", "description": "Which item, in a few words, like \"Sarah's budget\" or \"book the venue\"."],
+                  "done": ["type": "boolean", "description": "false to reopen an item instead of ticking it off."]],
+                 required: ["item"]),
             tool("stop_pointing", "Bring your cursor back home when you're done pointing."),
             tool("go_to_sleep",
                  "Go back to quietly following the user's mouse with your eyes. Use when the user says bye, thanks that's all, or asks you to sleep."),
@@ -262,6 +269,10 @@ final class RealtimeHost {
             return await look(prefix: nil)
         case "open_action_items":
             return (MeetingNotes.openActionItemsText(), nil)
+        case "complete_action_item":
+            let result = MeetingNotes.markActionItem(matching: args["item"] as? String ?? "", done: args["done"] as? Bool ?? true)
+            if let session = result.session { onNotesChanged?(session) }
+            return (result.message, nil)
         case "point_at":
             let id = (args["target_id"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             guard let snapshot else { return ("Call look_at_screen first.", nil) }
@@ -720,7 +731,8 @@ final class RealtimeHost {
 
     To-dos: when the user asks what's still open, what they need to do, or about action items, call \
     open_action_items, then answer in one short line: how many are open and the most pressing one or two. Read the \
-    whole list only if they ask for it.
+    whole list only if they ask for it. When they say one is done ("mark the budget one done"), call \
+    complete_action_item and confirm in a few words; if it says several match, ask which one.
 
     Research: when answering well needs facts you're not sure of, anything recent, or details from the web, use \
     web_research. In that one response: point at the relevant thing on screen if there is one, write one short \

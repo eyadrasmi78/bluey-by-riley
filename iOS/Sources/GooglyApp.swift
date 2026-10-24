@@ -181,6 +181,9 @@ struct RootView: View {
                 animator.localMood = .talking
             }
         }
+        link.onNotesChanged = { [store, link] session in
+            if let id = UUID(uuidString: session) { NotesSync.fetchDigest(id, store: store, link: link) }
+        }
         link.onCommand = { [live] command in
             switch command {
             case "wake": live.wake()

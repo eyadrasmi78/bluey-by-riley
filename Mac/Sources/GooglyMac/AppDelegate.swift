@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         server.onRequest = { [weak self] packet, reply in self?.host.handle(packet, reply: reply) }
         server.start()
         host.onChange = { [weak self] in self?.refreshIcon() }
+        host.onNotesChanged = { [weak self] session in self?.server.broadcast(Packet(command: "digestChanged", text: session)) }
 
         registerHotKeys()
 
