@@ -52,9 +52,17 @@ struct BlueySession: Codable, Identifiable, Equatable {
     /// questions, replies and reports, in time order.
     var displayEntries: [TranscriptEntry] {
         let properUntil = entries.filter { $0.kind == .transcript }.map(\.time).max() ?? .distantPast
-        return entries
+        var shown = entries
             .filter { !$0.text.isEmpty && !($0.kind == .heard && $0.time <= properUntil) }
             .sorted { $0.time < $1.time }
+        // A held question is in both the recording and the live recognizer: show it once, as your question,
+        // in the recording's (more accurate) wording.
+        let merged = TranscriptMerge.merge(shown.map {
+            TranscriptMerge.Line(isTranscript: $0.kind == .transcript, isAsked: $0.kind == .asked,
+                                 time: $0.time.timeIntervalSince1970, text: $0.text)
+        })
+        for i in merged.asQuestion { shown[i].kind = .asked }
+        return shown.enumerated().filter { !merged.drop.contains($0.offset) }.map(\.element)
     }
 
     var transcribing: Int { pending?.count ?? 0 }

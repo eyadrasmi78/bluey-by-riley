@@ -35,7 +35,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Talk to your blueberry. He listens while he's awake (double tap him to wake him up or put him to sleep).</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Lets him hear you say “Hey Bluey” and wake up, all on this device.</string>
+	<string>Lets him hear you say “Hey Bluey” and wake up. Wake-word listening runs on this device; sessions you start are sent to your Mac and OpenAI.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fredoka.ttf</string>

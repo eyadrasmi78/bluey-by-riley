@@ -748,7 +748,9 @@ final class RealtimeHost {
                     "turn_detection": ["type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300,
                                        "silence_duration_ms": 500, "create_response": false, "interrupt_response": false],
                     "noise_reduction": ["type": "near_field"],
-                    "transcription": ["model": "gpt-4o-mini-transcribe"],
+                    // The prompt keeps short phrases from being heard as another language ("Open TextEdit" once came out Czech).
+                    "transcription": ["model": "gpt-4o-mini-transcribe",
+                                      "prompt": "The speaker talks in English or Arabic (often Gulf Arabic). Transcribe in the language spoken; never in any other language."],
                 ],
             ],
             "tools": tools,

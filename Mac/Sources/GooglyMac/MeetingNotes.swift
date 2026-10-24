@@ -1,4 +1,5 @@
 import Foundation
+import GooglyShared
 
 /// Turns recorded audio into a proper transcript (with speaker labels) and keeps each session's
 /// meeting notes as plain files any agent can read: ~/Documents/Bluey Notes/<date> <id>/.
@@ -240,10 +241,20 @@ enum MeetingNotes {
         if asked > 0 { out.append("You asked Bluey \(asked) question(s); they're marked inline below.") }
         out += ["", "## Transcript", ""]
 
-        for entry in entries {
+        // A held question is in both the recording and the live recognizer: show it once, as your question.
+        let merged = TranscriptMerge.merge(entries.map {
+            TranscriptMerge.Line(isTranscript: $0["kind"] as? String == "transcript", isAsked: $0["kind"] as? String == "asked",
+                                 time: $0["time"] as? Double ?? 0, text: $0["text"] as? String ?? "")
+        })
+        for (index, entry) in entries.enumerated() where !merged.drop.contains(index) {
             let text = (entry["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             let time = (entry["time"] as? Double).map { clock.string(from: Date(timeIntervalSince1970: $0)) } ?? ""
+            if merged.asQuestion.contains(index) {
+                out.append("> **[\(time)] You asked Bluey:** \(text)")
+                out.append("")
+                continue
+            }
             switch entry["kind"] as? String {
             case "transcript":
                 out.append("**[\(time)] Speaker \(entry["speaker"] as? String ?? "?"):** \(text)")
