@@ -66,6 +66,12 @@ extension MeetingNotes {
 
     // MARK: Action items
 
+    /// "None", "None.", "N/A", "لا شيء" … — a summary saying there's nothing to do.
+    static func isNone(_ item: String) -> Bool {
+        let bare = item.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespaces))
+        return bare.isEmpty || ["none", "n/a", "na", "nothing", "لا شيء", "لا يوجد", "لا توجد"].contains(bare)
+    }
+
     /// The bullets under "**Action items**" in a summary ("None" and empty lists give []).
     static func actionItems(in summary: String) -> [String] {
         guard let marker = summary.range(of: "Action items", options: .caseInsensitive) else { return [] }
@@ -74,7 +80,7 @@ extension MeetingNotes {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard line.hasPrefix("-") || line.hasPrefix("*") || line.hasPrefix("•") else { continue }
             let item = line.drop { "-*• ".contains($0) }.trimmingCharacters(in: .whitespaces)
-            if !item.isEmpty, item.lowercased() != "none", item != "لا شيء", item != "لا يوجد" { items.append(item) }
+            if !isNone(item) { items.append(item) }
         }
         return items
     }
@@ -101,7 +107,7 @@ extension MeetingNotes {
             let own = folder.appendingPathComponent("action-items.md")
             var items: [String] = []
             if let saved = try? String(contentsOf: own, encoding: .utf8) {
-                items = saved.split(separator: "\n").filter { $0.hasPrefix("- [") }.map(String.init)
+                items = saved.split(separator: "\n").filter { $0.hasPrefix("- [") && !isNone(String($0.dropFirst(6))) }.map(String.init)
             } else if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8) {
                 items = actionItems(in: summary).map { "- [ ] \($0)" }
             }
