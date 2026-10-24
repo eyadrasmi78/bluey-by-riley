@@ -52,6 +52,11 @@ extension MeetingNotes {
     @discardableResult
     static func setActionItemsDone(session: String, done: [String]) -> Bool {
         guard let folder = existingFolder(session: session) else { return false }
+        return setActionItemsDone(folder: folder, done: done)
+    }
+
+    @discardableResult
+    static func setActionItemsDone(folder: URL, done: [String]) -> Bool {
         let file = folder.appendingPathComponent("action-items.md")
         guard let text = try? String(contentsOf: file, encoding: .utf8) else { return false }
         let doneSet = Set(done)
@@ -85,6 +90,54 @@ extension MeetingNotes {
         }
         guard count > 0 else { return "No open action items in the meeting notes." }
         return "\(count) open action item(s), newest meeting first:\n" + out.joined(separator: "\n")
+    }
+
+    // MARK: Ticking items off by voice
+
+    private static let fillerWords: Set<String> = ["the", "a", "an", "one", "item", "task", "todo", "to", "do", "mark", "as",
+                                                   "done", "complete", "completed", "finished", "tick", "off", "that", "it",
+                                                   "my", "please", "is", "of", "for", "ال", "خلص", "خلصت"]
+
+    private static func keywords(_ text: String) -> Set<String> {
+        Set(text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 1 && !fillerWords.contains($0) })
+    }
+
+    /// The session id a folder belongs to (from its session.json), for telling the phone what changed.
+    static func sessionID(of folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("session.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["id"] as? String
+    }
+
+    /// Ticks off (or reopens) the action item that best matches what the user said, like "the budget one".
+    /// Returns a line for Bluey and, when something changed, the session id so the phone can refresh.
+    static func markActionItem(matching description: String, done: Bool) -> (message: String, session: String?) {
+        let wanted = keywords(description)
+        guard !wanted.isEmpty else { return ("Ask which item they mean.", nil) }
+        var candidates: [(folder: URL, item: String, score: Double)] = []
+        for folder in sessionFolders() {
+            let doneNow = Set(doneActionItems(folder: folder))
+            guard let text = try? String(contentsOf: folder.appendingPathComponent("action-items.md"), encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n") where line.hasPrefix("- [") {
+                let item = String(line.dropFirst(6))
+                guard doneNow.contains(item) != done, !isNone(item) else { continue }  // only open ones to tick, done ones to reopen
+                let score = Double(wanted.intersection(keywords(item)).count) / Double(wanted.count)
+                if score >= 0.5 { candidates.append((folder, item, score)) }
+            }
+        }
+        let ranked = candidates.sorted { $0.score > $1.score }
+        guard let best = ranked.first else {
+            return ("No \(done ? "open" : "finished") action item matches \"\(description)\". Tell the user and offer to read the list.", nil)
+        }
+        if ranked.count > 1, ranked[1].score == best.score {
+            let options = ranked.prefix(3).map { "\"\($0.item)\"" }.joined(separator: " or ")
+            return ("More than one item matches: \(options). Ask which one.", nil)
+        }
+        var list = doneActionItems(folder: best.folder)
+        if done { list.append(best.item) } else { list.removeAll { $0 == best.item } }
+        guard setActionItemsDone(folder: best.folder, done: list) else { return ("Couldn't update the notes file.", nil) }
+        return ("\(done ? "Ticked off" : "Reopened"): \"\(best.item)\" (\(title(of: best.folder))).", sessionID(of: best.folder))
     }
 
     // MARK: Search

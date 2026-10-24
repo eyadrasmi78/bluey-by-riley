@@ -97,6 +97,30 @@ final class ChunkRecorder {
 
 /// Sends recorded chunks to the Mac for transcription and keeps the Mac's meeting-notes files up to date.
 enum NotesSync {
+    /// Asks the Mac for a finished session's summary and action items. Ticks the Mac hasn't received yet are sent;
+    /// otherwise the Mac's ticks (including ones made by voice) are adopted.
+    static func fetchDigest(_ id: UUID, store: SessionStore, link: MacLink) {
+        guard let session = store.sessions.first(where: { $0.id == id }), session.ended != nil, link.connected else { return }
+        link.request(Packet(command: "digest", text: id.uuidString)) { reply in
+            guard let text = reply?.text,
+                  let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                  let summary = json["summary"] as? String, !summary.isEmpty else { return }
+            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [], done: json["done"] as? [String] ?? [])
+            if let mine = store.sessions.first(where: { $0.id == id }), mine.doneUnsent == true {
+                sendDone(id, mine.doneItems ?? [], store: store, link: link)
+            }
+        }
+    }
+
+    /// Sends the session's ticked items; once the Mac confirms, they stop overriding the Mac's copy.
+    static func sendDone(_ id: UUID, _ done: [String], store: SessionStore, link: MacLink) {
+        let body: [String: Any] = ["session": id.uuidString, "done": done]
+        guard let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
+        link.request(Packet(command: "actionsDone", text: text)) { reply in
+            if reply?.text == "ok" { store.doneSynced(id) }
+        }
+    }
+
     private static var inFlight: Set<String> = []
 
     static func chunkURL(_ session: UUID, index: Int) -> URL {

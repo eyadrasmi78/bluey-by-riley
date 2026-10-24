@@ -267,24 +267,9 @@ struct SessionDetailView: View {
     private var session: BlueySession? { store.sessions.first { $0.id == id } }
 
     /// Asks the Mac for this session's summary and action items (it writes them once the session is over).
-    private func fetchDigest() {
-        guard let session, session.ended != nil, link.connected else { return }
-        link.request(Packet(command: "digest", text: id.uuidString)) { reply in
-            guard let text = reply?.text,
-                  let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                  let summary = json["summary"] as? String, !summary.isEmpty else { return }
-            store.setDigest(id, summary: summary, actions: json["actions"] as? [String] ?? [],
-                            done: json["done"] as? [String] ?? [])
-            // Ticks made while the Mac was away: send them now.
-            if let done = store.sessions.first(where: { $0.id == id })?.doneItems { sendDone(done) }
-        }
-    }
+    private func fetchDigest() { NotesSync.fetchDigest(id, store: store, link: link) }
 
-    private func sendDone(_ done: [String]) {
-        let body: [String: Any] = ["session": id.uuidString, "done": done]
-        guard let text = (try? JSONSerialization.data(withJSONObject: body)).flatMap({ String(data: $0, encoding: .utf8) }) else { return }
-        link.send(Packet(command: "actionsDone", text: text))
-    }
+    private func sendDone(_ done: [String]) { NotesSync.sendDone(id, done, store: store, link: link) }
 
     var body: some View {
         VStack(spacing: 0) {

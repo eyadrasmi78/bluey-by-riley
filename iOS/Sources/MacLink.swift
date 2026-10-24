@@ -23,6 +23,8 @@ final class MacLink: ObservableObject {
     @Published private(set) var pairingFailed = false
     /// Commands from the Mac, like "wake" and "sleep".
     var onCommand: ((String) -> Void)?
+    /// The Mac changed a session's notes (e.g. an action item ticked off by voice); carries the session id.
+    var onNotesChanged: ((String) -> Void)?
     private var waiting: [String: (Packet?) -> Void] = [:]
 
     // MARK: Pairing
@@ -304,6 +306,8 @@ final class MacLink: ObservableObject {
             guard let self, let command = packet.command else { return }
             if let callID = packet.callID, let done = self.waiting.removeValue(forKey: callID) {
                 done(packet)
+            } else if command == "digestChanged", let session = packet.text {
+                self.onNotesChanged?(session)
             } else {
                 self.onCommand?(command)
             }

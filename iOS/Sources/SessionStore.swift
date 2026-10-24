@@ -38,6 +38,8 @@ struct BlueySession: Codable, Identifiable, Equatable {
     var actionItems: [String]?
     /// Action items you've ticked off (synced to the Mac's action-items.md).
     var doneItems: [String]?
+    /// True while ticks made on the phone haven't reached the Mac yet (they win over the Mac's copy until then).
+    var doneUnsent: Bool?
 
     var questionCount: Int { entries.filter { $0.kind == .asked }.count }
 
@@ -197,7 +199,7 @@ final class SessionStore: ObservableObject {
         guard let i = sessions.firstIndex(where: { $0.id == session }) else { return }
         sessions[i].digest = summary
         sessions[i].actionItems = actions
-        if sessions[i].doneItems == nil { sessions[i].doneItems = done }  // the phone's own ticks win once it has some
+        if sessions[i].doneUnsent != true { sessions[i].doneItems = done }  // the Mac's copy is the truth, unless ours is newer
         scheduleSave(sync: false)
     }
 
@@ -208,8 +210,16 @@ final class SessionStore: ObservableObject {
         var done = sessions[i].doneItems ?? []
         if let at = done.firstIndex(of: item) { done.remove(at: at) } else { done.append(item) }
         sessions[i].doneItems = done
+        sessions[i].doneUnsent = true
         scheduleSave(sync: false)
         return done
+    }
+
+    /// The Mac confirmed it saved the phone's ticks.
+    func doneSynced(_ session: UUID) {
+        guard let i = sessions.firstIndex(where: { $0.id == session }), sessions[i].doneUnsent == true else { return }
+        sessions[i].doneUnsent = false
+        scheduleSave(sync: false)
     }
 
     func setNotesPath(_ session: UUID, _ path: String) {
