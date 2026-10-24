@@ -192,6 +192,8 @@ final class RealtimeHost {
                  "Look something up on the web and put a short report (title plus up to four paragraphs, with sources) on the user's screen. Use for anything you're not sure of, anything recent, or anything that needs facts, prices, news or details. Before calling it, point at the relevant thing if there is one and reply with one short line that ends with \"doing some research…\".",
                  ["question": ["type": "string", "description": "What to research, as a clear, self-contained question."]],
                  required: ["question"]),
+            tool("open_action_items",
+                 "List the user's open (not yet ticked off) action items from their meeting notes, newest meeting first. Use when they ask what's still open, what they need to do, or about their to-dos or action items."),
             tool("stop_pointing", "Bring your cursor back home when you're done pointing."),
             tool("go_to_sleep",
                  "Go back to quietly following the user's mouse with your eyes. Use when the user says bye, thanks that's all, or asks you to sleep."),
@@ -258,6 +260,8 @@ final class RealtimeHost {
         switch name {
         case "look_at_screen":
             return await look(prefix: nil)
+        case "open_action_items":
+            return (MeetingNotes.openActionItemsText(), nil)
         case "point_at":
             let id = (args["target_id"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             guard let snapshot else { return ("Call look_at_screen first.", nil) }
@@ -713,6 +717,10 @@ final class RealtimeHost {
     mouse pointer, which look_at_screen tells you. Point at the most specific thing (a word or number rather than a \
     whole line). For shapes, arrows or charts with no text, use point_at_spot. If the screen may have changed, look \
     again. When the user says goodbye or asks you to sleep, reply with a very short goodbye and call go_to_sleep.
+
+    To-dos: when the user asks what's still open, what they need to do, or about action items, call \
+    open_action_items, then answer in one short line: how many are open and the most pressing one or two. Read the \
+    whole list only if they ask for it.
 
     Research: when answering well needs facts you're not sure of, anything recent, or details from the web, use \
     web_research. In that one response: point at the relevant thing on screen if there is one, write one short \

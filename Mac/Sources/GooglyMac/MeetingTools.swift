@@ -65,6 +65,28 @@ extension MeetingNotes {
         return true
     }
 
+    // MARK: Open action items, for Bluey
+
+    /// Unticked action items across meetings, newest meeting first, as plain text for Bluey to answer from.
+    static func openActionItemsText(limit: Int = 25) -> String {
+        var out: [String] = []
+        var count = 0
+        for folder in sessionFolders() where count < limit {
+            var open: [String] = []
+            if let saved = try? String(contentsOf: folder.appendingPathComponent("action-items.md"), encoding: .utf8) {
+                open = saved.split(separator: "\n").filter { $0.hasPrefix("- [ ] ") }.map { String($0.dropFirst(6)) }
+            } else if let summary = try? String(contentsOf: folder.appendingPathComponent("summary.md"), encoding: .utf8) {
+                open = actionItems(in: summary)
+            }
+            open = Array(open.filter { !isNone($0) }.prefix(limit - count))
+            guard !open.isEmpty else { continue }
+            count += open.count
+            out += ["\(title(of: folder)):"] + open.map { "- \($0)" }
+        }
+        guard count > 0 else { return "No open action items in the meeting notes." }
+        return "\(count) open action item(s), newest meeting first:\n" + out.joined(separator: "\n")
+    }
+
     // MARK: Search
 
     struct Hit {
