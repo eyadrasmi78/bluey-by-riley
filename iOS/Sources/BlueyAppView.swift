@@ -350,6 +350,7 @@ struct SessionDetailView: View {
                             DigestCard(summary: digest, actions: session?.actionItems ?? [], done: Set(session?.doneItems ?? [])) { item in
                                 sendDone(store.toggleDone(id, item: item))
                             }
+                            .id("digest")
                         }
                         ForEach(session?.displayEntries ?? []) { entry in
                             EntryView(entry: entry).id(entry.id)
@@ -360,7 +361,11 @@ struct SessionDetailView: View {
                 }
                 .onAppear {
                     fetchDigest()
-                    if let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    // A finished session with a summary opens at the top (the summary card); a live one at the latest line.
+                    if session?.digest == nil, let last = session?.entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+                .onChange(of: session?.digest) { _, digest in
+                    if digest != nil { withAnimation { proxy.scrollTo("digest", anchor: .top) } }
                 }
                 .onChange(of: link.connected) { _, _ in fetchDigest() }
                 .onChange(of: session?.entries.count) { _, _ in
