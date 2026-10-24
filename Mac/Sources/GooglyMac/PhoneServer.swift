@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Network
 import GooglyShared
 
@@ -33,6 +34,7 @@ final class PhoneServer {
     /// Open the pairing window (menu "Pair a Phone…"): a short-lived second listener whose TLS PSK
     /// is derived from the pairing code. Whoever types the code gets the long-term link key.
     func beginPairing(code: String, seconds: TimeInterval = 600) {
+        NSLog("Googly: pairing window requested")
         endPairing()
         pairingFailures = 0
         pairingDelivered = false
@@ -76,6 +78,13 @@ final class PhoneServer {
                 self.pairingClients.append(link)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak link] in link?.cancel() }
             }
+            listener.stateUpdateHandler = { state in
+                NSLog("Googly: pairing listener state: \(state)")
+                if case .failed(let error) = state {
+                    NSLog("Googly: pairing listener failed: \(error)")
+                    DispatchQueue.main.async { NSSound.beep() }
+                }
+            }
             listener.start(queue: .main)
             pairListener = listener
             let work = DispatchWorkItem { [weak self] in self?.endPairing() }
@@ -83,6 +92,7 @@ final class PhoneServer {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
         } catch {
             NSLog("Googly: could not start pairing listener: \(error)")
+            DispatchQueue.main.async { NSSound.beep() }
         }
     }
 

@@ -235,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func pairPhone() {
         NSApp.activate(ignoringOtherApps: true)
+        NSLog("Googly: Pair a Phone chosen")
         let code = GooglySecurity.newPairingCode()
         server.beginPairing(code: code)
         let alert = NSAlert()

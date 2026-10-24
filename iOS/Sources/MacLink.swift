@@ -125,6 +125,14 @@ final class MacLink: ObservableObject {
         }
         pairBrowser = browser
         browser.start(queue: .main)
+        // If the Mac isn't offering a code (its window closed, or "Pair a Phone…" wasn't chosen), say so
+        // instead of sitting on "Looking for your Mac" forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, self.pairingMac == mac else { return }  // finished or replaced meanwhile
+            self.pairingFailed = true
+            self.needsPairingFor = mac
+            self.endPairing()
+        }
     }
 
     private func request(packet: Packet, on link: LineConnection, _ done: @escaping (Packet?) -> Void) {
@@ -172,6 +180,7 @@ final class MacLink: ObservableObject {
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             guard let self else { return }
             self.macs = results.compactMap(Self.serviceName).sorted()
+            Self.trace("browse: \(self.macs)")
             // Move over when the picked Mac shows up while linked to a different one.
             if let preferred = self.preferredMac, self.currentMac != preferred, self.macs.contains(preferred) {
                 self.link?.cancel()
@@ -179,6 +188,7 @@ final class MacLink: ObservableObject {
             self.connectIfNeeded()
         }
         browser.stateUpdateHandler = { [weak self] state in
+            Self.trace("browser state: \(state)")
             if case .failed = state { self?.restart() }
         }
         browser.start(queue: .main)
@@ -217,6 +227,17 @@ final class MacLink: ObservableObject {
         connectIfNeeded()
     }
 
+    /// Connection diagnostics in Documents/link.log (no keys or content): what was found, tried and why it failed.
+    static func trace(_ line: String) {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("link.log")
+        let row = Data("\(ISO8601DateFormatter().string(from: Date())) \(line)\n".utf8)
+        if let old = try? Data(contentsOf: url), old.count < 200_000, let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile(); handle.write(row); try? handle.close()
+        } else {
+            try? row.write(to: url)
+        }
+    }
+
     private static func serviceName(_ result: NWBrowser.Result) -> String? {
         if case let .service(name, _, _, _) = result.endpoint { return name }
         return nil
@@ -232,23 +253,35 @@ final class MacLink: ObservableObject {
             params = GooglySecurity.parameters(key: key, identity: GooglySecurity.linkIdentity)
         } else {
             // No key for this Mac: it will refuse the TLS handshake. Ask the user for the code.
+            Self.trace("no key for \(name ?? "?"): asking for the code")
             needsPairingFor = name
             return
         }
         needsPairingFor = nil
         let link = LineConnection(NWConnection(to: result.endpoint, using: params))
+        Self.trace("connecting to \(name ?? "?") with stored key")
+        var reachedReady = false  // a drop before this means the handshake (our key) was refused
         link.onState = { [weak self, weak link] state in
             guard let self, let link, link === self.link else { return }
+            Self.trace("link state: \(state)")
             switch state {
             case .ready:
+                reachedReady = true
                 if let name = self.currentMac { self.failures[name] = 0 }
                 self.connected = true
                 link.send(Packet(hello: Self.deviceName))
             case .failed, .cancelled:
-                if let name = self.currentMac {
+                // Failing before the handshake completes while the Mac is plainly on the network = key refused.
+                if let name = self.currentMac, !reachedReady, self.macs.contains(name) {
                     self.failures[name, default: 0] += 1
                     // A Mac that rotated its key ("Unpair All Phones") will never accept this one again.
-                    if self.failures[name, default: 0] >= 4, Self.linkKey(for: name) != nil {
+                    // Forget it, so the pairing screen stays up instead of flipping back to "Looking for your Mac".
+                    if self.failures[name, default: 0] >= 3, Self.linkKey(for: name) != nil {
+                        var keys = Self.linkKeys
+                        keys.removeValue(forKey: name)
+                        Self.linkKeys = keys
+                        self.failures[name] = 0
+                        Self.trace("key for \(name) refused 3 times: forgot it, asking for the code")
                         self.needsPairingFor = name
                     }
                 }
@@ -277,6 +310,13 @@ final class MacLink: ObservableObject {
         }
         self.link = link
         link.start()
+        // When the Mac refuses our PSK, iOS can leave the connection in "preparing" indefinitely instead of
+        // failing it. Give the handshake a few seconds; a cancel then counts as a refusal (see .cancelled above).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self, weak link] in
+            guard let self, let link, link === self.link, !self.connected else { return }
+            Self.trace("handshake timed out")
+            link.cancel()
+        }
     }
 
     func send(_ packet: Packet) {
